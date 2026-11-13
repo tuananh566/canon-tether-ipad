@@ -28,6 +28,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as FileSystem from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
 import * as ImagePicker from 'expo-image-picker';
 import { useCameraConnection } from '../src/hooks/useCameraConnection';
 import { useEventPoller } from '../src/hooks/useEventPoller';
@@ -65,6 +66,7 @@ export default function TetherScreen() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [fastMode, setFastMode] = useState(true); // Tải ảnh xem nhanh tối ưu hiển thị (~0.5s)
+  const [downloadingOriginalId, setDownloadingOriginalId] = useState<string | null>(null);
 
   // ── Tính năng So sánh 2 ảnh (Side-by-Side Compare) ─────────────
   const [isCompareMode, setIsCompareMode] = useState(false);
@@ -115,6 +117,8 @@ export default function TetherScreen() {
             filename: cleanName,
             localUri: `${DOWNLOAD_DIR}${name}`,
             timestamp: ts || Date.now(),
+            isFastPreview: false,
+            isOriginal: true,
           };
         })
         .sort((a, b) => b.timestamp - a.timestamp); // Ảnh mới nhất lên đầu
@@ -174,6 +178,7 @@ export default function TetherScreen() {
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const photo = await downloadAndSavePhoto(contentUrl, filename, 5, fastMode);
+          photo.contentUrl = contentUrl;
           setPhotos((prev) => [photo, ...prev]);
           setSelectedPhoto(photo); // Tự động hiển thị ảnh mới nhất vừa chụp
 
@@ -372,6 +377,84 @@ export default function TetherScreen() {
         },
       ],
     );
+  };
+
+  // ── Tải ảnh file gốc (Full Resolution 26MP) từ máy ảnh Canon ───
+  const handleDownloadOriginalPhoto = async (photo: DownloadedPhoto) => {
+    if (!isConnected) {
+      Alert.alert(
+        'Mất kết nối máy ảnh',
+        'Vui lòng kết nối lại Wi-Fi với máy ảnh Canon EOS RP để tải file ảnh gốc chất lượng cao.',
+      );
+      return;
+    }
+
+    setDownloadingOriginalId(photo.id);
+    try {
+      // 1. Xác định URL file gốc trên camera Canon
+      let url = photo.contentUrl;
+      if (!url) {
+        const foundUrl = await ccapi.findPhotoUrl(photo.filename);
+        if (foundUrl) {
+          url = foundUrl;
+        } else {
+          url = ccapi.getContentUrl(`sd/DCIM/100CANON/${photo.filename}`);
+        }
+      }
+
+      // Xóa kind=display để tải bản gốc full chất lượng
+      const fullQualityUrl = ccapi.getContentUrl(url, 'main').replace(/[?&]kind=display/g, '');
+
+      // 2. Tải file gốc và lưu vào iPad Photos Library (fastMode = false)
+      const updatedPhoto = await downloadAndSavePhoto(
+        fullQualityUrl,
+        photo.filename,
+        5,
+        false,
+      );
+
+      const fullPhoto: DownloadedPhoto = {
+        ...updatedPhoto,
+        isOriginal: true,
+        isFastPreview: false,
+        contentUrl: fullQualityUrl,
+      };
+
+      // 3. Dọn dẹp preview tạm cũ nếu đã có file gốc mới
+      if (photo.localUri !== fullPhoto.localUri) {
+        try {
+          if (photo.assetId && photo.assetId !== fullPhoto.assetId) {
+            await MediaLibrary.deleteAssetsAsync([photo.assetId]);
+          }
+          await FileSystem.deleteAsync(photo.localUri, { idempotent: true });
+        } catch {
+          // ignore
+        }
+      }
+
+      // 4. Cập nhật state ảnh
+      setPhotos((prev) =>
+        prev.map((p) => (p.id === photo.id || p.filename === photo.filename ? fullPhoto : p)),
+      );
+
+      if (selectedPhoto?.id === photo.id || selectedPhoto?.filename === photo.filename) {
+        setSelectedPhoto(fullPhoto);
+      }
+      if (comparePhotoA?.id === photo.id || comparePhotoA?.filename === photo.filename) {
+        setComparePhotoA(fullPhoto);
+      }
+      if (comparePhotoB?.id === photo.id || comparePhotoB?.filename === photo.filename) {
+        setComparePhotoB(fullPhoto);
+      }
+
+      Alert.alert('Thành công', `Đã lưu file gốc "${photo.filename}" vào Thư viện iPad!`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Không thể tải file gốc từ máy ảnh.';
+      console.error('[Tether] Download original error:', err);
+      Alert.alert('Lỗi tải file gốc', msg);
+    } finally {
+      setDownloadingOriginalId(null);
+    }
   };
 
   // ── Xoá ảnh khỏi app đồng thời xoá trong iPad Photos ───────────
@@ -590,16 +673,41 @@ export default function TetherScreen() {
               {comparePhotoA && (
                 <View style={styles.compareMetaOverlay}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.compareMetaText}>{comparePhotoA.filename}</Text>
+                    <View style={styles.metaFilenameRow}>
+                      <Text style={styles.compareMetaText}>{comparePhotoA.filename}</Text>
+                      {comparePhotoA.isOriginal ? (
+                        <View style={styles.badgeOriginal}>
+                          <Text style={styles.badgeOriginalText}>HD</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.badgeFast}>
+                          <Text style={styles.badgeFastText}>⚡</Text>
+                        </View>
+                      )}
+                    </View>
                     {renderExifBadge(comparePhotoA.exif)}
                   </View>
-                  <TouchableOpacity
-                    onPress={() => handleDeletePhoto(comparePhotoA)}
-                    style={styles.compareDeleteBtn}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.compareDeleteBtnText}>🗑 Xóa</Text>
-                  </TouchableOpacity>
+                  <View style={styles.compareActionRow}>
+                    {!comparePhotoA.isOriginal && (
+                      <TouchableOpacity
+                        onPress={() => handleDownloadOriginalPhoto(comparePhotoA)}
+                        style={styles.compareDownloadBtn}
+                        disabled={downloadingOriginalId === comparePhotoA.id}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.compareDownloadBtnText}>
+                          {downloadingOriginalId === comparePhotoA.id ? '⏳' : '⬇️ Gốc'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      onPress={() => handleDeletePhoto(comparePhotoA)}
+                      style={styles.compareDeleteBtn}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.compareDeleteBtnText}>🗑 Xóa</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
             </TouchableOpacity>
@@ -684,16 +792,41 @@ export default function TetherScreen() {
               {comparePhotoB && (
                 <View style={styles.compareMetaOverlay}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.compareMetaText}>{comparePhotoB.filename}</Text>
+                    <View style={styles.metaFilenameRow}>
+                      <Text style={styles.compareMetaText}>{comparePhotoB.filename}</Text>
+                      {comparePhotoB.isOriginal ? (
+                        <View style={styles.badgeOriginal}>
+                          <Text style={styles.badgeOriginalText}>HD</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.badgeFast}>
+                          <Text style={styles.badgeFastText}>⚡</Text>
+                        </View>
+                      )}
+                    </View>
                     {renderExifBadge(comparePhotoB.exif)}
                   </View>
-                  <TouchableOpacity
-                    onPress={() => handleDeletePhoto(comparePhotoB)}
-                    style={styles.compareDeleteBtn}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.compareDeleteBtnText}>🗑 Xóa</Text>
-                  </TouchableOpacity>
+                  <View style={styles.compareActionRow}>
+                    {!comparePhotoB.isOriginal && (
+                      <TouchableOpacity
+                        onPress={() => handleDownloadOriginalPhoto(comparePhotoB)}
+                        style={styles.compareDownloadBtn}
+                        disabled={downloadingOriginalId === comparePhotoB.id}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.compareDownloadBtnText}>
+                          {downloadingOriginalId === comparePhotoB.id ? '⏳' : '⬇️ Gốc'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      onPress={() => handleDeletePhoto(comparePhotoB)}
+                      style={styles.compareDeleteBtn}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.compareDeleteBtnText}>🗑 Xóa</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
             </TouchableOpacity>
@@ -729,15 +862,58 @@ export default function TetherScreen() {
               </View>
             )}
 
-            {/* Thông tin ảnh đè nhẹ góc dưới của Stage kèm nút Xóa */}
+            {/* 1. Ô thông số ảnh độc lập góc dưới bên trái */}
             {displayPhoto && (
-              <View style={styles.metaOverlay}>
-                <View style={{ flex: 1 }}>
+              <View style={styles.metaOverlayLeft}>
+                <View style={styles.metaFilenameRow}>
                   <Text style={styles.metaFilename}>{displayPhoto.filename}</Text>
-                  {renderExifBadge(displayPhoto.exif)}
+                  {displayPhoto.isOriginal ? (
+                    <View style={styles.badgeOriginal}>
+                      <Text style={styles.badgeOriginalText}>HD GỐC</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.badgeFast}>
+                      <Text style={styles.badgeFastText}>⚡ SIÊU TỐC</Text>
+                    </View>
+                  )}
                 </View>
+                {renderExifBadge(displayPhoto.exif)}
+              </View>
+            )}
 
-                {/* Nút Xóa ảnh trong App & iPad Photos */}
+            {/* 2. Cụm nút tác vụ ảnh độc lập góc dưới bên phải */}
+            {displayPhoto && (
+              <View style={styles.stageActionsRight}>
+                {/* Nút Tải file gốc */}
+                {!displayPhoto.isOriginal ? (
+                  <TouchableOpacity
+                    onPress={() => handleDownloadOriginalPhoto(displayPhoto)}
+                    style={[
+                      styles.downloadOriginalBtn,
+                      downloadingOriginalId === displayPhoto.id && styles.downloadOriginalBtnDisabled,
+                    ]}
+                    disabled={downloadingOriginalId === displayPhoto.id}
+                    activeOpacity={0.8}
+                  >
+                    {downloadingOriginalId === displayPhoto.id ? (
+                      <>
+                        <ActivityIndicator size="small" color="#FFD60A" />
+                        <Text style={styles.downloadOriginalBtnText}>Đang tải gốc (~15MB)...</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={styles.downloadOriginalBtnIcon}>⬇️</Text>
+                        <Text style={styles.downloadOriginalBtnText}>Tải file gốc</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.originalReadyBadge}>
+                    <Text style={styles.originalReadyBadgeText}>✅ Đã có file gốc</Text>
+                  </View>
+                )}
+
+                {/* Nút Xóa ảnh khỏi App & Thư viện iPad */}
                 <TouchableOpacity
                   onPress={() => handleDeletePhoto(displayPhoto)}
                   style={styles.deletePhotoBtn}
@@ -748,10 +924,10 @@ export default function TetherScreen() {
               </View>
             )}
 
-            {/* Gợi ý Zoom & Phóng to thu nhỏ */}
+            {/* 3. Gợi ý Zoom & Phóng to thu nhỏ đặt ở góc trên bên phải */}
             {displayPhoto && (
               <View style={styles.zoomHintBadge}>
-                <Text style={styles.zoomHintBadgeText}>🔍 Dùng 2 ngón tay phóng to / thu nhỏ chi tiết (1x - 5x)</Text>
+                <Text style={styles.zoomHintBadgeText}>🔍 Phóng to 1x - 5x</Text>
               </View>
             )}
           </>
@@ -1333,7 +1509,7 @@ const styles = StyleSheet.create({
   },
   zoomHintBadge: {
     position: 'absolute',
-    bottom: SPACING.md,
+    top: SPACING.md,
     right: SPACING.lg,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     paddingVertical: 4,
@@ -1547,34 +1723,123 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.sm,
     fontWeight: '600',
   },
-  metaOverlay: {
+  metaOverlayLeft: {
     position: 'absolute',
     bottom: SPACING.md,
     left: SPACING.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-    maxWidth: '75%',
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    maxWidth: '55%',
     zIndex: 20,
+  },
+  metaFilenameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+  },
+  badgeOriginal: {
+    backgroundColor: 'rgba(52, 199, 89, 0.2)',
+    borderWidth: 1,
+    borderColor: '#34C759',
+    paddingVertical: 1,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+  },
+  badgeOriginalText: {
+    color: '#34C759',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  badgeFast: {
+    backgroundColor: 'rgba(255, 149, 0, 0.2)',
+    borderWidth: 1,
+    borderColor: '#FF9500',
+    paddingVertical: 1,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+  },
+  badgeFastText: {
+    color: '#FF9500',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  stageActionsRight: {
+    position: 'absolute',
+    bottom: SPACING.md,
+    right: SPACING.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    zIndex: 20,
+  },
+  downloadOriginalBtn: {
+    backgroundColor: 'rgba(0, 122, 255, 0.25)',
+    borderWidth: 1,
+    borderColor: '#0A84FF',
+    paddingVertical: 7,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  downloadOriginalBtnDisabled: {
+    opacity: 0.6,
+  },
+  downloadOriginalBtnIcon: {
+    fontSize: 13,
+  },
+  downloadOriginalBtnText: {
+    color: '#5AC8FA',
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '700',
+  },
+  originalReadyBadge: {
+    backgroundColor: 'rgba(52, 199, 89, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(52, 199, 89, 0.4)',
+    paddingVertical: 7,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.sm,
+  },
+  originalReadyBadgeText: {
+    color: '#34C759',
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '600',
   },
   deletePhotoBtn: {
     backgroundColor: 'rgba(255, 59, 48, 0.2)',
     borderWidth: 1,
     borderColor: '#FF3B30',
-    paddingVertical: 5,
+    paddingVertical: 7,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.sm,
-    marginLeft: SPACING.md,
-    alignSelf: 'center',
   },
   deletePhotoBtnText: {
     color: '#FF3B30',
     fontSize: FONT_SIZE.xs,
+    fontWeight: '700',
+  },
+  compareActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  compareDownloadBtn: {
+    backgroundColor: 'rgba(0, 122, 255, 0.25)',
+    borderWidth: 1,
+    borderColor: '#0A84FF',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 4,
+  },
+  compareDownloadBtnText: {
+    color: '#5AC8FA',
+    fontSize: 11,
     fontWeight: '700',
   },
   metaFilename: {

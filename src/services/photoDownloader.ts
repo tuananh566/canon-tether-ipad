@@ -52,6 +52,7 @@ export async function downloadAndSavePhoto(
 
   // Chuẩn bị URL: nếu fastMode = true và URL chưa có tham số kind, dùng kind=display
   let targetUrl = contentUrl;
+  let isActualFast = fastMode;
   if (fastMode && !targetUrl.includes('kind=')) {
     const sep = targetUrl.includes('?') ? '&' : '?';
     targetUrl = `${targetUrl}${sep}kind=display`;
@@ -71,6 +72,7 @@ export async function downloadAndSavePhoto(
       // Nếu camera không hỗ trợ kind=display (trả về 400/404), fallback về ảnh gốc full
       if ((downloadResult.status === 400 || downloadResult.status === 404) && targetUrl.includes('kind=display')) {
         targetUrl = contentUrl;
+        isActualFast = false;
         continue;
       }
     } catch {
@@ -142,6 +144,9 @@ export async function downloadAndSavePhoto(
     assetId: createdAssetId,
     timestamp: Date.now(),
     exif: parsedExif,
+    isFastPreview: isActualFast,
+    isOriginal: !isActualFast,
+    contentUrl,
   };
 
   return photo;

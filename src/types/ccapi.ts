@@ -92,6 +92,9 @@ export interface DownloadedPhoto {
   width?: number;
   height?: number;
   exif?: PhotoExif;
+  isFastPreview?: boolean;
+  isOriginal?: boolean;
+  contentUrl?: string;
 }
 
 // ── Poller State ────────────────────────────────────────────────────

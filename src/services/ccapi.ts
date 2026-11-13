@@ -124,6 +124,39 @@ export class CcapiService {
   }
 
   /**
+   * Search for a photo by filename across camera storage directories (e.g. sd/DCIM/...)
+   */
+  async findPhotoUrl(filename: string): Promise<string | null> {
+    try {
+      const storages = await this.getStorageList();
+      for (const storage of storages) {
+        const storagePath = typeof storage === 'string' ? storage : ((storage as any).path || 'sd');
+        let dcimList: string[] = [];
+        try {
+          dcimList = await this.listDirectory(`${storagePath}/DCIM`);
+        } catch {
+          continue;
+        }
+        for (const dir of dcimList) {
+          const cleanDir = dir.replace(/^\/?(contents\/)?/, '');
+          try {
+            const files = await this.listDirectory(cleanDir);
+            const match = files.find((f) => f.toUpperCase().includes(filename.toUpperCase()));
+            if (match) {
+              return this.getContentUrl(match);
+            }
+          } catch {
+            continue;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[CCAPI] findPhotoUrl error:', err);
+    }
+    return null;
+  }
+
+  /**
    * Download raw bytes of a content item.
    * Returns the Response so the caller can stream it to disk.
    */
