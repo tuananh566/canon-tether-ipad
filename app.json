@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "Canon Tether",
+    "slug": "canon-tether-ipad",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "icon": "./assets/icon.jpg",
+    "scheme": "canon-tether",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#0D0D0D",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "isTabletOnly": true,
+      "bundleIdentifier": "com.canontether.ipad",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSPhotoLibraryAddUsageDescription": "Canon Tether cần quyền truy cập Thư viện Ảnh để lưu ảnh tải về từ máy ảnh Canon.",
+        "NSPhotoLibraryUsageDescription": "Canon Tether cần quyền truy cập Thư viện Ảnh để lưu và hiển thị ảnh từ máy ảnh Canon.",
+        "NSLocalNetworkUsageDescription": "Canon Tether cần truy cập mạng cục bộ để kết nối với máy ảnh Canon qua WiFi.",
+        "UIRequiresFullScreen": true,
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Canon Tether cần quyền truy cập Thư viện Ảnh để lưu ảnh từ máy ảnh Canon.",
+          "savePhotosPermission": "Canon Tether cần quyền lưu ảnh vào Thư viện Ảnh.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "dfc26f5e-2a87-4c8e-824f-cf7fc1dc693d"
+      }
+    }
+  }
+}
