@@ -41,6 +41,7 @@ import {
 } from '../src/services/photoDownloader';
 import { DownloadedPhoto, PhotoExif } from '../src/types/ccapi';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS } from '../src/constants/theme';
+import { Histogram } from '../src/components/Histogram';
 
 export default function TetherScreen() {
   const router = useRouter();
@@ -62,6 +63,7 @@ export default function TetherScreen() {
   const [lastError, setLastError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
+  const [showHistogram, setShowHistogram] = useState(true);
 
   // ── Tính năng So sánh 2 ảnh (Side-by-Side Compare) ─────────────
   const [isCompareMode, setIsCompareMode] = useState(false);
@@ -341,9 +343,27 @@ export default function TetherScreen() {
     <SafeAreaView style={styles.container}>
       {/* ── Top Bar ─────────────────────────────────────────── */}
       <View style={styles.topBar}>
-        <TouchableOpacity onPress={handleDisconnect} style={styles.topBarBtn}>
-          <Text style={styles.topBarBtnText}>← Thoát</Text>
-        </TouchableOpacity>
+        <View style={styles.topLeft}>
+          <TouchableOpacity onPress={handleDisconnect} style={styles.topBarBtn}>
+            <Text style={styles.topBarBtnText}>← Thoát</Text>
+          </TouchableOpacity>
+
+          {/* Nút Reconnect nhanh góc trên bên trái khi mất kết nối */}
+          {!isConnected && (
+            <TouchableOpacity
+              onPress={handleReconnect}
+              style={[
+                styles.topReconnectBtn,
+                connStatus === 'connecting' && styles.topReconnectBtnDisabled,
+              ]}
+              disabled={connStatus === 'connecting'}
+            >
+              <Text style={styles.topReconnectBtnText}>
+                {connStatus === 'connecting' ? '⏳ Đang kết nối...' : '🔄 Kết nối lại'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         <View style={styles.topBarCenter}>
           <View
@@ -364,6 +384,24 @@ export default function TetherScreen() {
         </View>
 
         <View style={styles.topBarRight}>
+          {/* Nút bật/tắt Biểu đồ Histogram */}
+          <TouchableOpacity
+            onPress={() => setShowHistogram(!showHistogram)}
+            style={[
+              styles.compareToggleBtn,
+              showHistogram && styles.compareToggleBtnActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.compareToggleBtnText,
+                showHistogram && styles.compareToggleBtnTextActive,
+              ]}
+            >
+              📊 Histogram
+            </Text>
+          </TouchableOpacity>
+
           {/* Nút bật/tắt Chế độ So sánh 2 ảnh */}
           <TouchableOpacity
             onPress={toggleCompareMode}
@@ -507,6 +545,20 @@ export default function TetherScreen() {
               </View>
             )}
           </>
+        )}
+
+        {/* ── Floating Histogram Overlay (Góc dưới bên phải màn hình Stage) ── */}
+        {showHistogram && displayPhoto && (
+          <View style={styles.histogramFloating}>
+            <Histogram
+              photo={
+                isCompareMode
+                  ? (activeCompareSlot === 'A' ? comparePhotoA : comparePhotoB) || displayPhoto
+                  : displayPhoto
+              }
+              onClose={() => setShowHistogram(false)}
+            />
+          </View>
         )}
 
         {/* Loading Overlay khi đang tải ảnh */}
@@ -868,6 +920,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
+  topLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  topReconnectBtn: {
+    backgroundColor: 'rgba(255, 149, 0, 0.2)',
+    borderWidth: 1,
+    borderColor: '#FF9500',
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+  },
+  topReconnectBtnDisabled: {
+    opacity: 0.6,
+  },
+  topReconnectBtnText: {
+    color: '#FF9500',
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '700',
+  },
   topBarBtn: {
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.sm,
@@ -1085,6 +1158,12 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.sm,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
+  },
+  histogramFloating: {
+    position: 'absolute',
+    bottom: SPACING.md,
+    right: SPACING.lg,
+    zIndex: 25,
   },
   metaFilename: {
     color: COLORS.textPrimary,
