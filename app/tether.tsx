@@ -266,7 +266,7 @@ export default function TetherScreen() {
               },
             ]}
           />
-          <Text style={styles.topBarTitle} numberOfLines={1}>
+          <Text style={styles.topBarTitle}>
             {deviceInfo?.productname ?? 'Canon EOS RP'}
           </Text>
         </View>
