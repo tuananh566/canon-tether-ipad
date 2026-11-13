@@ -39,8 +39,12 @@ export function useEventPoller(
       poller.onStatusChange((s) => setPollerStatus(s));
       poller.onEvent((evt) => {
         setLastEvent(evt);
-        if (evt.addedcontents && evt.addedcontents.length > 0) {
-          onNewContentRef.current?.(evt.addedcontents);
+        const newContents = [
+          ...(evt.addedcontents || []),
+          ...(evt.updatedcontents || []),
+        ];
+        if (newContents.length > 0) {
+          onNewContentRef.current?.(newContents);
         }
       });
       pollerRef.current = poller;

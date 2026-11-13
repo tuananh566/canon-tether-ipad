@@ -39,6 +39,7 @@ export async function requestMediaLibraryPermission(): Promise<boolean> {
 export async function downloadAndSavePhoto(
   contentUrl: string,
   filename: string,
+  maxRetries: number = 5,
 ): Promise<DownloadedPhoto> {
   await ensureDirectory();
 
@@ -46,17 +47,41 @@ export async function downloadAndSavePhoto(
   const uniqueName = `${Date.now()}_${filename}`;
   const localUri = `${DOWNLOAD_DIR}${uniqueName}`;
 
-  // Download to local file system.
-  const downloadResult = await FileSystem.downloadAsync(contentUrl, localUri);
-  if (downloadResult.status !== 200) {
+  let lastStatus = 0;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // Download to local file system.
+    const downloadResult = await FileSystem.downloadAsync(contentUrl, localUri);
+    lastStatus = downloadResult.status;
+
+    if (downloadResult.status === 200) {
+      break;
+    }
+
     // Clean up partial file.
     try {
       await FileSystem.deleteAsync(localUri, { idempotent: true });
     } catch {
       /* ignore */
     }
+
+    // HTTP 503 = Máy ảnh Canon đang bận ghi thẻ nhớ / xử lý ảnh burst
+    if (downloadResult.status === 503 || downloadResult.status === 404) {
+      if (attempt < maxRetries) {
+        // Tăng dần thời gian chờ: 500ms, 800ms, 1200ms...
+        const waitMs = 400 + attempt * 300;
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+    }
+
     throw new Error(
       `Download failed for ${filename}: HTTP ${downloadResult.status}`,
+    );
+  }
+
+  if (lastStatus !== 200) {
+    throw new Error(
+      `Download failed for ${filename}: HTTP ${lastStatus} (Máy ảnh bận)`,
     );
   }
 

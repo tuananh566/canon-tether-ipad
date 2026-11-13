@@ -53,10 +53,14 @@ export default function TetherScreen() {
   const [autoDownload, setAutoDownload] = useState(true);
   const [photos, setPhotos] = useState<DownloadedPhoto[]>([]);
   const [downloading, setDownloading] = useState(false);
+  const [queueCount, setQueueCount] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
 
   // Track processed URLs to avoid double-downloads.
   const processedUrls = useRef(new Set<string>());
+  // Queue tải ảnh tuần tự tránh nghẽn chip Wi-Fi máy ảnh khi chụp liên tục
+  const downloadQueue = useRef<string[]>([]);
+  const isDownloadingRef = useRef(false);
 
   // ── Auto-connect on mount ───────────────────────────────────────
 
@@ -73,38 +77,78 @@ export default function TetherScreen() {
     requestMediaLibraryPermission();
   }, []);
 
-  // ── New-content handler ─────────────────────────────────────────
+  // ── Queue processor: Xử lý tuần tự từng ảnh ─────────────────────
 
-  const handleNewContent = useCallback(
-    async (urls: string[]) => {
-      if (!autoDownload) return;
+  const processQueue = useCallback(async () => {
+    if (isDownloadingRef.current) return;
+    isDownloadingRef.current = true;
+    setDownloading(true);
 
-      for (const rawUrl of urls) {
-        const filename = filenameFromPath(rawUrl);
+    while (downloadQueue.current.length > 0) {
+      const rawUrl = downloadQueue.current.shift()!;
+      setQueueCount(downloadQueue.current.length);
 
-        // Skip non-JPEG and already-processed files.
-        if (!isJpeg(filename)) continue;
-        if (processedUrls.current.has(rawUrl)) continue;
-        processedUrls.current.add(rawUrl);
+      const filename = filenameFromPath(rawUrl);
+      const contentUrl = ccapi.getContentUrl(rawUrl);
 
-        const contentUrl = ccapi.getContentUrl(rawUrl);
-
-        setDownloading(true);
-        setLastError(null);
-
+      // Cơ chế retry 3 lần: phòng trường hợp máy ảnh đang bận ghi thẻ SD khi chụp burst
+      let downloaded = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const photo = await downloadAndSavePhoto(contentUrl, filename);
           setPhotos((prev) => [photo, ...prev]);
+          processedUrls.current.add(rawUrl);
+          downloaded = true;
+          setLastError(null);
+          break;
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'Tải ảnh thất bại';
-          setLastError(msg);
-          console.error('[Tether] download error:', err);
-        } finally {
-          setDownloading(false);
+          if (attempt < 2) {
+            // Chờ 350ms cho chip máy ảnh hoàn tất ghi thẻ nhớ
+            await new Promise((r) => setTimeout(r, 350));
+          } else {
+            const msg = err instanceof Error ? err.message : 'Tải ảnh thất bại';
+            setLastError(`Lỗi ${filename}: ${msg}`);
+            console.error('[Tether] download error:', err);
+          }
         }
       }
+
+      // Nghỉ nhẹ 100ms giữa các ảnh liên tiếp để giảm tải bộ nhớ đệm của Canon RP
+      if (downloadQueue.current.length > 0) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+
+    isDownloadingRef.current = false;
+    setDownloading(false);
+    setQueueCount(0);
+  }, []);
+
+  // ── New-content handler ─────────────────────────────────────────
+
+  const handleNewContent = useCallback(
+    (urls: string[]) => {
+      if (!autoDownload) return;
+
+      let hasNew = false;
+      for (const rawUrl of urls) {
+        const filename = filenameFromPath(rawUrl);
+
+        // Bỏ qua nếu không phải JPEG hoặc đã tải rồi
+        if (!isJpeg(filename)) continue;
+        if (processedUrls.current.has(rawUrl)) continue;
+        if (downloadQueue.current.includes(rawUrl)) continue;
+
+        downloadQueue.current.push(rawUrl);
+        hasNew = true;
+      }
+
+      if (hasNew) {
+        setQueueCount(downloadQueue.current.length);
+        processQueue();
+      }
     },
-    [autoDownload],
+    [autoDownload, processQueue],
   );
 
   // ── Event poller ────────────────────────────────────────────────
@@ -206,7 +250,11 @@ export default function TetherScreen() {
           {downloading && (
             <View style={styles.downloadingOverlay}>
               <ActivityIndicator size="large" color={COLORS.accent} />
-              <Text style={styles.downloadingText}>Đang tải ảnh...</Text>
+              <Text style={styles.downloadingText}>
+                {queueCount > 0
+                  ? `Đang đồng bộ (còn ${queueCount + 1} ảnh)...`
+                  : 'Đang tải ảnh...'}
+              </Text>
             </View>
           )}
         </View>
