@@ -34,7 +34,7 @@ import {
   isJpeg,
   requestMediaLibraryPermission,
 } from '../src/services/photoDownloader';
-import { DownloadedPhoto } from '../src/types/ccapi';
+import { DownloadedPhoto, PhotoExif } from '../src/types/ccapi';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS } from '../src/constants/theme';
 
 export default function TetherScreen() {
@@ -223,6 +223,26 @@ export default function TetherScreen() {
     ]);
   };
 
+  // ── Render Exif Badge Helper ───────────────────────────────────
+
+  const renderExifBadge = (exif?: PhotoExif) => {
+    if (!exif) return null;
+    const parts = [
+      exif.iso,
+      exif.aperture,
+      exif.shutterSpeed,
+      exif.focalLength,
+    ].filter(Boolean);
+
+    if (parts.length === 0) return null;
+
+    return (
+      <View style={styles.exifBadgeContainer}>
+        <Text style={styles.exifBadgeText}>{parts.join('   •   ')}</Text>
+      </View>
+    );
+  };
+
   // ── Render ──────────────────────────────────────────────────────
 
   return (
@@ -319,6 +339,7 @@ export default function TetherScreen() {
               {comparePhotoA && (
                 <View style={styles.compareMetaOverlay}>
                   <Text style={styles.compareMetaText}>{comparePhotoA.filename}</Text>
+                  {renderExifBadge(comparePhotoA.exif)}
                 </View>
               )}
             </TouchableOpacity>
@@ -358,6 +379,7 @@ export default function TetherScreen() {
               {comparePhotoB && (
                 <View style={styles.compareMetaOverlay}>
                   <Text style={styles.compareMetaText}>{comparePhotoB.filename}</Text>
+                  {renderExifBadge(comparePhotoB.exif)}
                 </View>
               )}
             </TouchableOpacity>
@@ -386,6 +408,7 @@ export default function TetherScreen() {
             {displayPhoto && (
               <View style={styles.metaOverlay}>
                 <Text style={styles.metaFilename}>{displayPhoto.filename}</Text>
+                {renderExifBadge(displayPhoto.exif)}
               </View>
             )}
           </>
@@ -837,6 +860,23 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
     fontSize: FONT_SIZE.sm,
     fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  exifBadgeContainer: {
+    marginTop: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingVertical: 3,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 199, 89, 0.4)',
+    alignSelf: 'flex-start',
+  },
+  exifBadgeText: {
+    color: '#34C759',
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '700',
+    letterSpacing: 0.5,
     fontVariant: ['tabular-nums'],
   },
   errorFloating: {

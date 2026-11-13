@@ -75,6 +75,14 @@ export interface CameraConnectionState {
 
 // ── Downloaded Photo ────────────────────────────────────────────────
 
+export interface PhotoExif {
+  aperture?: string;     // e.g. "f/2.8"
+  shutterSpeed?: string; // e.g. "1/160s"
+  iso?: string;          // e.g. "ISO 6400"
+  focalLength?: string;  // e.g. "24mm"
+  lens?: string;         // e.g. "RF24-105mm F4-7.1 IS STM"
+}
+
 export interface DownloadedPhoto {
   id: string;
   filename: string;
@@ -82,6 +90,7 @@ export interface DownloadedPhoto {
   timestamp: number;
   width?: number;
   height?: number;
+  exif?: PhotoExif;
 }
 
 // ── Poller State ────────────────────────────────────────────────────

@@ -8,7 +8,7 @@
 
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import { DownloadedPhoto } from '../types/ccapi';
+import { DownloadedPhoto, PhotoExif } from '../types/ccapi';
 
 const DOWNLOAD_DIR = `${FileSystem.documentDirectory}canon-tether/`;
 
@@ -87,11 +87,24 @@ export async function downloadAndSavePhoto(
 
   // Save to the iPad Photo Library.
   let assetUri = localUri;
+  let parsedExif: PhotoExif | undefined;
   try {
     const hasPermission = await requestMediaLibraryPermission();
     if (hasPermission) {
       const asset = await MediaLibrary.createAssetAsync(localUri);
       assetUri = asset.uri;
+
+      // Trích xuất thông số Exif (Khẩu độ, Tốc độ, ISO, Tiêu cự)
+      try {
+        const info = await MediaLibrary.getAssetInfoAsync(asset, {
+          shouldDownloadFromNetwork: false,
+        });
+        if (info && info.exif) {
+          parsedExif = formatExif(info.exif);
+        }
+      } catch (exifErr) {
+        console.warn('[PhotoDownloader] Could not read Exif:', exifErr);
+      }
     }
   } catch (err) {
     console.warn('[PhotoDownloader] Could not save to Photo Library:', err);
@@ -103,9 +116,58 @@ export async function downloadAndSavePhoto(
     filename,
     localUri: assetUri,
     timestamp: Date.now(),
+    exif: parsedExif,
   };
 
   return photo;
+}
+
+/**
+ * Trích xuất và định dạng các thông số chụp ảnh từ raw EXIF của camera
+ */
+export function formatExif(raw: any): PhotoExif | undefined {
+  if (!raw) return undefined;
+  const exif = raw['{Exif}'] || raw;
+
+  let aperture: string | undefined;
+  const fnum = exif.FNumber || raw.FNumber;
+  if (fnum) {
+    aperture = `f/${Number(fnum).toFixed(1).replace('.0', '')}`;
+  }
+
+  let shutterSpeed: string | undefined;
+  const exp = exif.ExposureTime || raw.ExposureTime;
+  if (exp) {
+    const expNum = Number(exp);
+    if (expNum < 1 && expNum > 0) {
+      shutterSpeed = `1/${Math.round(1 / expNum)}s`;
+    } else {
+      shutterSpeed = `${expNum}s`;
+    }
+  }
+
+  let iso: string | undefined;
+  const rawIso = exif.ISOSpeedRatings || raw.ISOSpeedRatings || exif.ISO;
+  if (rawIso) {
+    const isoVal = Array.isArray(rawIso) ? rawIso[0] : rawIso;
+    iso = `ISO ${isoVal}`;
+  }
+
+  let focalLength: string | undefined;
+  const focal = exif.FocalLength || raw.FocalLength;
+  if (focal) {
+    focalLength = `${Math.round(Number(focal))}mm`;
+  }
+
+  let lens: string | undefined;
+  const rawLens = exif.LensModel || raw.LensModel;
+  if (rawLens) {
+    lens = String(rawLens);
+  }
+
+  if (!aperture && !shutterSpeed && !iso) return undefined;
+
+  return { aperture, shutterSpeed, iso, focalLength, lens };
 }
 
 /**
