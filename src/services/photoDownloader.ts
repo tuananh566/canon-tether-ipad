@@ -10,7 +10,7 @@ import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { DownloadedPhoto, PhotoExif } from '../types/ccapi';
 
-const DOWNLOAD_DIR = `${FileSystem.documentDirectory}canon-tether/`;
+export const DOWNLOAD_DIR = `${FileSystem.documentDirectory}canon-tether/`;
 
 /** Ensure the local download directory exists. */
 async function ensureDirectory(): Promise<void> {

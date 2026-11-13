@@ -18,6 +18,7 @@ import {
   Modal,
   SafeAreaView,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import * as FileSystem from 'expo-file-system';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS } from '../src/constants/theme';
 
@@ -29,11 +30,13 @@ const THUMB_SIZE = (SCREEN_W - SPACING.lg * 2 - THUMB_GAP * (NUM_COLUMNS - 1)) /
 
 interface GalleryPhoto {
   name: string;
+  cleanName: string;
   uri: string;
   modificationTime: number;
 }
 
 export default function GalleryScreen() {
+  const router = useRouter();
   const [photos, setPhotos] = useState<GalleryPhoto[]>([]);
   const [selectedPhoto, setSelectedPhoto] = useState<GalleryPhoto | null>(null);
 
@@ -60,11 +63,19 @@ export default function GalleryScreen() {
             lower.endsWith('.heic')
           );
         })
-        .map((name) => ({
-          name,
-          uri: `${DOWNLOAD_DIR}${name}`,
-          modificationTime: 0,
-        }))
+        .map((name) => {
+          const parts = name.split('_');
+          let displayName = name;
+          if (parts.length >= 2 && !isNaN(Number(parts[0]))) {
+            displayName = parts.slice(1).join('_');
+          }
+          return {
+            name,
+            cleanName: displayName,
+            uri: `${DOWNLOAD_DIR}${name}`,
+            modificationTime: 0,
+          };
+        })
         .reverse(); // newest first (files are prefixed with timestamp)
 
       setPhotos(imageFiles);
@@ -96,6 +107,9 @@ export default function GalleryScreen() {
       ) : (
         <>
           <View style={styles.header}>
+            <TouchableOpacity onPress={() => router.back()}>
+              <Text style={styles.backBtn}>← Quay lại Studio</Text>
+            </TouchableOpacity>
             <Text style={styles.headerText}>{photos.length} ảnh</Text>
             <TouchableOpacity onPress={loadPhotos}>
               <Text style={styles.refreshBtn}>🔄 Làm mới</Text>
@@ -136,7 +150,7 @@ export default function GalleryScreen() {
                 style={styles.modalImage}
                 resizeMode="contain"
               />
-              <Text style={styles.modalFilename}>{selectedPhoto.name}</Text>
+              <Text style={styles.modalFilename}>{selectedPhoto.cleanName}</Text>
             </>
           )}
         </SafeAreaView>
@@ -165,6 +179,11 @@ const styles = StyleSheet.create({
   },
   headerText: {
     color: COLORS.textSecondary,
+    fontSize: FONT_SIZE.md,
+    fontWeight: '600',
+  },
+  backBtn: {
+    color: COLORS.accent,
     fontSize: FONT_SIZE.md,
     fontWeight: '600',
   },

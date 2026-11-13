@@ -20,11 +20,14 @@ import {
   Switch,
   ActivityIndicator,
   ScrollView,
+  FlatList,
   Alert,
   Modal,
   SafeAreaView,
+  Dimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as FileSystem from 'expo-file-system';
 import { useCameraConnection } from '../src/hooks/useCameraConnection';
 import { useEventPoller } from '../src/hooks/useEventPoller';
 import { ccapi } from '../src/services/ccapi';
@@ -33,6 +36,8 @@ import {
   filenameFromPath,
   isJpeg,
   requestMediaLibraryPermission,
+  clearLocalCache,
+  DOWNLOAD_DIR,
 } from '../src/services/photoDownloader';
 import { DownloadedPhoto, PhotoExif } from '../src/types/ccapi';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS } from '../src/constants/theme';
@@ -56,6 +61,7 @@ export default function TetherScreen() {
   const [queueCount, setQueueCount] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isGalleryOpen, setIsGalleryOpen] = useState(false);
 
   // ── Tính năng So sánh 2 ảnh (Side-by-Side Compare) ─────────────
   const [isCompareMode, setIsCompareMode] = useState(false);
@@ -68,6 +74,68 @@ export default function TetherScreen() {
   // Queue tải ảnh tuần tự tránh nghẽn chip Wi-Fi máy ảnh khi chụp liên tục
   const downloadQueue = useRef<string[]>([]);
   const isDownloadingRef = useRef(false);
+
+  // ── Đồng bộ & Tải tất cả ảnh đã chụp từ thư mục máy về danh sách ──
+  const loadSavedPhotos = useCallback(async () => {
+    try {
+      const dirInfo = await FileSystem.getInfoAsync(DOWNLOAD_DIR);
+      if (!dirInfo.exists) return;
+
+      const files = await FileSystem.readDirectoryAsync(DOWNLOAD_DIR);
+      const imageFiles = files.filter((f) => {
+        const lower = f.toLowerCase();
+        return (
+          lower.endsWith('.jpg') ||
+          lower.endsWith('.jpeg') ||
+          lower.endsWith('.png') ||
+          lower.endsWith('.heic')
+        );
+      });
+
+      const loaded: DownloadedPhoto[] = imageFiles
+        .map((name) => {
+          const parts = name.split('_');
+          let ts = 0;
+          let cleanName = name;
+          if (parts.length >= 2 && !isNaN(Number(parts[0]))) {
+            ts = Number(parts[0]);
+            cleanName = parts.slice(1).join('_');
+          }
+
+          // Đánh dấu để không tải lại khi camera gửi event
+          processedUrls.current.add(cleanName);
+          processedUrls.current.add(name);
+
+          return {
+            id: name,
+            filename: cleanName,
+            localUri: `${DOWNLOAD_DIR}${name}`,
+            timestamp: ts || Date.now(),
+          };
+        })
+        .sort((a, b) => b.timestamp - a.timestamp); // Ảnh mới nhất lên đầu
+
+      if (loaded.length > 0) {
+        setPhotos((prev) => {
+          // Gộp các ảnh mới chụp trong phiên với ảnh đã có trong thư viện
+          const map = new Map<string, DownloadedPhoto>();
+          for (const p of loaded) map.set(p.filename, p);
+          for (const p of prev) map.set(p.filename, p); // Ưu tiên ảnh session vì có thể đã parse Exif
+          return Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+        });
+
+        setSelectedPhoto((curr) => curr ?? loaded[0]);
+      }
+    } catch (err) {
+      console.error('[Tether] loadSavedPhotos error:', err);
+    }
+  }, []);
+
+  // ── Auto-connect & load saved photos on mount ───────────────────
+
+  useEffect(() => {
+    loadSavedPhotos();
+  }, [loadSavedPhotos]);
 
   // ── Auto-connect on mount ───────────────────────────────────────
 
@@ -223,6 +291,30 @@ export default function TetherScreen() {
     ]);
   };
 
+  // ── Xoá bộ nhớ đệm ảnh ──────────────────────────────────────────
+  const handleClearCache = () => {
+    Alert.alert(
+      'Xoá bộ nhớ đệm',
+      'Bạn có chắc chắn muốn xoá tất cả ảnh đã tải trong phiên này? (Ảnh đã lưu vào iPad Photos sẽ không bị ảnh hưởng)',
+      [
+        { text: 'Huỷ', style: 'cancel' },
+        {
+          text: 'Xoá tất cả',
+          style: 'destructive',
+          onPress: async () => {
+            await clearLocalCache();
+            setPhotos([]);
+            setSelectedPhoto(null);
+            setComparePhotoA(null);
+            setComparePhotoB(null);
+            processedUrls.current.clear();
+            setIsGalleryOpen(false);
+          },
+        },
+      ],
+    );
+  };
+
   // ── Render Exif Badge Helper ───────────────────────────────────
 
   const renderExifBadge = (exif?: PhotoExif) => {
@@ -291,7 +383,10 @@ export default function TetherScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            onPress={() => router.push('/gallery')}
+            onPress={() => {
+              loadSavedPhotos();
+              setIsGalleryOpen(true);
+            }}
             style={styles.topBarBtn}
           >
             <Text style={styles.topBarBtnText}>
@@ -614,6 +709,141 @@ export default function TetherScreen() {
             </TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* ── Gallery Modal (Đồng bộ trực tiếp với ảnh gần đây & chọn ảnh xem) ── */}
+      <Modal
+        visible={isGalleryOpen}
+        transparent={false}
+        animationType="slide"
+        onRequestClose={() => setIsGalleryOpen(false)}
+      >
+        <SafeAreaView style={styles.galleryModalContainer}>
+          <View style={styles.galleryModalHeader}>
+            <View>
+              <Text style={styles.galleryModalTitle}>
+                🖼 Thư viện ảnh ({photos.length})
+              </Text>
+              <Text style={styles.galleryModalSubtitle}>
+                {isCompareMode
+                  ? `Đang chọn cho [Khung ảnh ${activeCompareSlot}] • Chạm ảnh để so sánh`
+                  : 'Chạm ảnh để xem trên màn hình lớn'}
+              </Text>
+            </View>
+
+            <View style={styles.galleryModalActions}>
+              <TouchableOpacity
+                onPress={loadSavedPhotos}
+                style={styles.galleryHeaderBtn}
+              >
+                <Text style={styles.galleryHeaderBtnText}>🔄 Làm mới</Text>
+              </TouchableOpacity>
+
+              {photos.length > 0 && (
+                <TouchableOpacity
+                  onPress={handleClearCache}
+                  style={[styles.galleryHeaderBtn, { borderColor: COLORS.error }]}
+                >
+                  <Text style={[styles.galleryHeaderBtnText, { color: COLORS.error }]}>
+                    🗑 Xoá đệm
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                onPress={() => setIsGalleryOpen(false)}
+                style={styles.galleryCloseBtn}
+              >
+                <Text style={styles.galleryCloseText}>✕ Đóng</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {photos.length === 0 ? (
+            <View style={styles.galleryEmptyContainer}>
+              <Text style={{ fontSize: 48, opacity: 0.3, marginBottom: 12 }}>📂</Text>
+              <Text style={styles.galleryEmptyText}>Thư viện trống</Text>
+              <Text style={styles.galleryEmptySubtext}>
+                Ảnh sẽ tự động xuất hiện ở đây ngay khi bạn bấm chụp trên máy ảnh
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={photos}
+              keyExtractor={(item) => item.id}
+              numColumns={4}
+              contentContainerStyle={styles.galleryGrid}
+              columnWrapperStyle={styles.galleryGridRow}
+              showsVerticalScrollIndicator={true}
+              renderItem={({ item }) => {
+                const isSelected = displayPhoto?.id === item.id;
+                const isA = comparePhotoA?.id === item.id;
+                const isB = comparePhotoB?.id === item.id;
+
+                return (
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      if (isCompareMode) {
+                        if (activeCompareSlot === 'A') {
+                          setComparePhotoA(item);
+                          setActiveCompareSlot('B');
+                        } else {
+                          setComparePhotoB(item);
+                        }
+                      } else {
+                        setSelectedPhoto(item);
+                      }
+                      setIsGalleryOpen(false);
+                    }}
+                    style={[
+                      styles.galleryCard,
+                      !isCompareMode && isSelected && styles.galleryCardActive,
+                      isCompareMode && isA && styles.galleryCardCompareA,
+                      isCompareMode && isB && styles.galleryCardCompareB,
+                    ]}
+                  >
+                    <Image
+                      source={{ uri: item.localUri }}
+                      style={styles.galleryCardImage}
+                      resizeMode="cover"
+                    />
+
+                    {/* Badge trạng thái */}
+                    {!isCompareMode && isSelected && (
+                      <View style={styles.gallerySelectedBadge}>
+                        <Text style={styles.gallerySelectedBadgeText}>✓ Đang xem</Text>
+                      </View>
+                    )}
+                    {isCompareMode && isA && (
+                      <View style={[styles.gallerySlotBadge, { backgroundColor: '#34C759' }]}>
+                        <Text style={styles.gallerySlotBadgeText}>Ảnh A</Text>
+                      </View>
+                    )}
+                    {isCompareMode && isB && (
+                      <View style={[styles.gallerySlotBadge, { backgroundColor: '#FF9500' }]}>
+                        <Text style={styles.gallerySlotBadgeText}>Ảnh B</Text>
+                      </View>
+                    )}
+
+                    <View style={styles.galleryCardFooter}>
+                      <Text style={styles.galleryCardName} numberOfLines={1}>
+                        {item.filename}
+                      </Text>
+                      {item.exif && (
+                        <Text style={styles.galleryCardExif} numberOfLines={1}>
+                          {[item.exif.aperture, item.exif.shutterSpeed, item.exif.iso]
+                            .filter(Boolean)
+                            .join(' • ')}
+                        </Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          )}
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
@@ -1092,5 +1322,153 @@ const styles = StyleSheet.create({
     color: COLORS.error,
     fontSize: FONT_SIZE.md,
     fontWeight: '600',
+  },
+
+  // ── Gallery Modal Styles ─────────────────────────────────────────
+  galleryModalContainer: {
+    flex: 1,
+    backgroundColor: '#0a0a0a',
+  },
+  galleryModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    backgroundColor: COLORS.bgSecondary,
+  },
+  galleryModalTitle: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.xl,
+    fontWeight: '700',
+  },
+  galleryModalSubtitle: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZE.xs,
+    marginTop: 2,
+  },
+  galleryModalActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  galleryHeaderBtn: {
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgTertiary,
+  },
+  galleryHeaderBtnText: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.sm,
+    fontWeight: '600',
+  },
+  galleryCloseBtn: {
+    backgroundColor: COLORS.surface,
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+  },
+  galleryCloseText: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.sm,
+    fontWeight: '700',
+  },
+  galleryEmptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.xxl,
+  },
+  galleryEmptyText: {
+    color: COLORS.textSecondary,
+    fontSize: FONT_SIZE.xl,
+    fontWeight: '700',
+    marginBottom: SPACING.xs,
+  },
+  galleryEmptySubtext: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZE.sm,
+    textAlign: 'center',
+    maxWidth: 320,
+  },
+  galleryGrid: {
+    padding: SPACING.md,
+    gap: SPACING.md,
+  },
+  galleryGridRow: {
+    gap: SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  galleryCard: {
+    flex: 1,
+    backgroundColor: COLORS.bgTertiary,
+    borderRadius: BORDER_RADIUS.md,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    position: 'relative',
+  },
+  galleryCardActive: {
+    borderColor: COLORS.accent,
+  },
+  galleryCardCompareA: {
+    borderColor: '#34C759',
+  },
+  galleryCardCompareB: {
+    borderColor: '#FF9500',
+  },
+  galleryCardImage: {
+    width: '100%',
+    aspectRatio: 3 / 2,
+  },
+  gallerySelectedBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: COLORS.accent,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+    zIndex: 5,
+  },
+  gallerySelectedBadgeText: {
+    color: '#000',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  gallerySlotBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+    zIndex: 5,
+  },
+  gallerySlotBadgeText: {
+    color: '#000',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  galleryCardFooter: {
+    padding: SPACING.xs,
+    backgroundColor: 'rgba(20, 20, 20, 0.95)',
+  },
+  galleryCardName: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  galleryCardExif: {
+    color: '#34C759',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 2,
   },
 });
