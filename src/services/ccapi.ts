@@ -102,10 +102,17 @@ export class CcapiService {
 
   /**
    * Return the URL that can be used to download / fetch a file directly.
-   * `path` is relative, e.g. `"sd/DCIM/100CANON/IMG_0001.CR3"`.
+   * Handles full URL, absolute path with /ccapi/, or relative path.
    */
-  getContentUrl(path: string): string {
-    return `${this.baseUrl}/contents/${path}`;
+  getContentUrl(pathOrUrl: string): string {
+    if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+      return pathOrUrl;
+    }
+    if (pathOrUrl.startsWith('/ccapi/')) {
+      return `http://${this.ip}:${this.port}${pathOrUrl}`;
+    }
+    const cleanPath = pathOrUrl.replace(/^\/?(contents\/)?/, '');
+    return `${this.baseUrl}/contents/${cleanPath}`;
   }
 
   /**

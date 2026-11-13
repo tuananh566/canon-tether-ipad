@@ -80,16 +80,14 @@ export default function TetherScreen() {
       if (!autoDownload) return;
 
       for (const rawUrl of urls) {
-        // rawUrl is a full CCAPI path like "/ccapi/ver100/contents/sd/DCIM/100CANON/IMG_0001.JPG"
-        const relativePath = rawUrl.replace(/^\/ccapi\/ver100\/contents\//, '');
-        const filename = filenameFromPath(relativePath);
+        const filename = filenameFromPath(rawUrl);
 
         // Skip non-JPEG and already-processed files.
         if (!isJpeg(filename)) continue;
-        if (processedUrls.current.has(relativePath)) continue;
-        processedUrls.current.add(relativePath);
+        if (processedUrls.current.has(rawUrl)) continue;
+        processedUrls.current.add(rawUrl);
 
-        const contentUrl = ccapi.getContentUrl(relativePath);
+        const contentUrl = ccapi.getContentUrl(rawUrl);
 
         setDownloading(true);
         setLastError(null);
