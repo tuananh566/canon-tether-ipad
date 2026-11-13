@@ -42,7 +42,6 @@ import {
 } from '../src/services/photoDownloader';
 import { DownloadedPhoto, PhotoExif } from '../src/types/ccapi';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS } from '../src/constants/theme';
-import { Histogram } from '../src/components/Histogram';
 
 export default function TetherScreen() {
   const router = useRouter();
@@ -64,13 +63,13 @@ export default function TetherScreen() {
   const [lastError, setLastError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
-  const [showHistogram, setShowHistogram] = useState(true);
 
   // ── Tính năng So sánh 2 ảnh (Side-by-Side Compare) ─────────────
   const [isCompareMode, setIsCompareMode] = useState(false);
   const [comparePhotoA, setComparePhotoA] = useState<DownloadedPhoto | null>(null);
   const [comparePhotoB, setComparePhotoB] = useState<DownloadedPhoto | null>(null);
-  const [activeCompareSlot, setActiveCompareSlot] = useState<'A' | 'B'>('B');
+  const [activeCompareSlot, setActiveCompareSlot] = useState<'A' | 'B'>('A');
+  const [isLockB, setIsLockB] = useState(true); // Khóa hiển thị 1 ảnh duy nhất ở Khung B
 
   // Track processed URLs to avoid double-downloads.
   const processedUrls = useRef(new Set<string>());
@@ -176,9 +175,9 @@ export default function TetherScreen() {
           setPhotos((prev) => [photo, ...prev]);
           setSelectedPhoto(photo); // Tự động hiển thị ảnh mới nhất vừa chụp
 
-          // Nếu đang ở chế độ so sánh, cập nhật ảnh mới vào khung B
+          // Nếu đang ở chế độ so sánh: Mỗi bức ảnh mới chụp sẽ tự động xuất hiện ở Ảnh A
           if (isCompareMode) {
-            setComparePhotoB(photo);
+            setComparePhotoA(photo);
           }
 
           processedUrls.current.add(rawUrl);
@@ -251,9 +250,14 @@ export default function TetherScreen() {
   const toggleCompareMode = () => {
     if (!isCompareMode) {
       setIsCompareMode(true);
+      // Ảnh A là ảnh mới nhất (mỗi lần chụp mới sẽ xuất hiện ở đây)
       setComparePhotoA(selectedPhoto ?? photos[0] ?? null);
-      setComparePhotoB(photos[1] ?? photos[0] ?? null);
-      setActiveCompareSlot('B');
+      // Ảnh B là ảnh mẫu tham chiếu cố định
+      if (!comparePhotoB) {
+        setComparePhotoB(photos[1] ?? photos[0] ?? null);
+      }
+      setIsLockB(true); // Mặc định khóa hiển thị cố định ở Ảnh B
+      setActiveCompareSlot('A');
     } else {
       setIsCompareMode(false);
     }
@@ -300,19 +304,20 @@ export default function TetherScreen() {
         setPhotos((prev) => [externalPhoto, ...prev]);
 
         if (isCompareMode) {
-          const slot = targetSlot || activeCompareSlot;
+          const slot = targetSlot || (isLockB ? 'B' : activeCompareSlot);
           if (slot === 'A') {
             setComparePhotoA(externalPhoto);
-            setActiveCompareSlot('B');
           } else {
             setComparePhotoB(externalPhoto);
+            setIsLockB(true); // Tự động khóa Ảnh B vào bức tham chiếu này
           }
         } else {
-          // Tự động mở chế độ so sánh với ảnh này
+          // Tự động mở chế độ so sánh với ảnh này đặt ở Khung B
           setIsCompareMode(true);
-          setComparePhotoA(selectedPhoto ?? externalPhoto);
+          setComparePhotoA(selectedPhoto ?? photos[0] ?? null);
           setComparePhotoB(externalPhoto);
-          setActiveCompareSlot('B');
+          setIsLockB(true);
+          setActiveCompareSlot('A');
         }
       }
     } catch (err) {
@@ -434,24 +439,6 @@ export default function TetherScreen() {
         </View>
 
         <View style={styles.topBarRight}>
-          {/* Nút bật/tắt Biểu đồ Histogram */}
-          <TouchableOpacity
-            onPress={() => setShowHistogram(!showHistogram)}
-            style={[
-              styles.compareToggleBtn,
-              showHistogram && styles.compareToggleBtnActive,
-            ]}
-          >
-            <Text
-              style={[
-                styles.compareToggleBtnText,
-                showHistogram && styles.compareToggleBtnTextActive,
-              ]}
-            >
-              📊 Histogram
-            </Text>
-          </TouchableOpacity>
-
           {/* Nút bật/tắt Chế độ So sánh 2 ảnh */}
           <TouchableOpacity
             onPress={toggleCompareMode}
@@ -496,7 +483,7 @@ export default function TetherScreen() {
         {isCompareMode ? (
           /* ── CHẾ ĐỘ SO SÁNH 2 ẢNH SIDE-BY-SIDE ── */
           <View style={styles.compareContainer}>
-            {/* Khung Ảnh A (Trái) */}
+            {/* Khung Ảnh A (Trái - Ảnh mới chụp) */}
             <TouchableOpacity
               activeOpacity={0.95}
               onPress={() => setActiveCompareSlot('A')}
@@ -506,7 +493,7 @@ export default function TetherScreen() {
               ]}
             >
               <View style={[styles.compareBadge, styles.compareBadgeA]}>
-                <Text style={styles.compareBadgeText}>Ảnh A (Gốc)</Text>
+                <Text style={styles.compareBadgeText}>Ảnh A (Ảnh mới chụp 📸)</Text>
               </View>
 
               {/* Nút chọn ảnh từ iPad cho Khung A */}
@@ -526,7 +513,7 @@ export default function TetherScreen() {
                 />
               ) : (
                 <View style={styles.previewPlaceholder}>
-                  <Text style={styles.previewPlaceholderText}>Chưa chọn Ảnh A</Text>
+                  <Text style={styles.previewPlaceholderText}>Chưa có ảnh mới chụp</Text>
                 </View>
               )}
               {comparePhotoA && (
@@ -546,27 +533,51 @@ export default function TetherScreen() {
               <Text style={styles.swapBtnText}>⇄</Text>
             </TouchableOpacity>
 
-            {/* Khung Ảnh B (Phải) */}
+            {/* Khung Ảnh B (Phải - Khóa hiển thị 1 bức duy nhất) */}
             <TouchableOpacity
               activeOpacity={0.95}
               onPress={() => setActiveCompareSlot('B')}
               style={[
                 styles.comparePane,
                 activeCompareSlot === 'B' && styles.comparePaneActiveB,
+                isLockB && styles.comparePaneLockedB,
               ]}
             >
               <View style={[styles.compareBadge, styles.compareBadgeB]}>
-                <Text style={styles.compareBadgeText}>Ảnh B (So sánh)</Text>
+                <Text style={styles.compareBadgeText}>
+                  {isLockB ? 'Ảnh B (🔒 Đã khóa cố định)' : 'Ảnh B (Tham chiếu)'}
+                </Text>
               </View>
 
-              {/* Nút chọn ảnh từ iPad cho Khung B */}
-              <TouchableOpacity
-                onPress={() => handlePickExternalImage('B')}
-                style={styles.panePickExternalBtn}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.panePickExternalBtnText}>📁 Chọn ảnh từ iPad</Text>
-              </TouchableOpacity>
+              <View style={styles.paneControlsRight}>
+                {/* Nút Khóa / Mở khóa hiển thị cố định ở Ảnh B */}
+                <TouchableOpacity
+                  onPress={() => setIsLockB(!isLockB)}
+                  style={[
+                    styles.paneLockBtn,
+                    isLockB && styles.paneLockBtnActive,
+                  ]}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.paneLockBtnText,
+                      isLockB && styles.paneLockBtnTextActive,
+                    ]}
+                  >
+                    {isLockB ? '🔒 Đã khóa B' : '🔓 Mở khóa'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Nút chọn ảnh từ iPad cho Khung B */}
+                <TouchableOpacity
+                  onPress={() => handlePickExternalImage('B')}
+                  style={styles.panePickExternalBtn}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.panePickExternalBtnText}>📁 Chọn ảnh từ iPad</Text>
+                </TouchableOpacity>
+              </View>
 
               {comparePhotoB ? (
                 <Image
@@ -617,20 +628,6 @@ export default function TetherScreen() {
           </>
         )}
 
-        {/* ── Floating Histogram Overlay (Góc dưới bên phải màn hình Stage) ── */}
-        {showHistogram && displayPhoto && (
-          <View style={styles.histogramFloating}>
-            <Histogram
-              photo={
-                isCompareMode
-                  ? (activeCompareSlot === 'A' ? comparePhotoA : comparePhotoB) || displayPhoto
-                  : displayPhoto
-              }
-              onClose={() => setShowHistogram(false)}
-            />
-          </View>
-        )}
-
         {/* Loading Overlay khi đang tải ảnh */}
         {downloading && (
           <View style={styles.downloadingOverlay}>
@@ -656,18 +653,35 @@ export default function TetherScreen() {
         <View style={styles.filmstripHeader}>
           <Text style={styles.filmstripTitle}>
             {isCompareMode
-              ? `Chạm ảnh để đổi cho khung [Ảnh ${activeCompareSlot}]`
+              ? isLockB
+                ? '🔒 Ảnh B đã khóa • Chạm ảnh để xem trên [Ảnh A]'
+                : `Chạm ảnh để đổi cho khung [Ảnh ${activeCompareSlot}]`
               : 'Ảnh gần đây'}
           </Text>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm }}>
+            {isCompareMode && (
+              <TouchableOpacity
+                onPress={() => setIsLockB(!isLockB)}
+                style={[
+                  styles.pickExternalStripBtn,
+                  isLockB && { borderColor: '#FF9500', backgroundColor: 'rgba(255, 149, 0, 0.2)' },
+                ]}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.pickExternalStripBtnText, isLockB && { color: '#FF9500' }]}>
+                  {isLockB ? '🔒 Đang khóa Ảnh B' : '🔓 Mở khóa B'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
-              onPress={() => handlePickExternalImage(isCompareMode ? activeCompareSlot : 'B')}
+              onPress={() => handlePickExternalImage(isLockB ? 'B' : activeCompareSlot)}
               style={styles.pickExternalStripBtn}
               activeOpacity={0.8}
             >
               <Text style={styles.pickExternalStripBtnText}>
-                📁 Chọn ảnh từ iPad {isCompareMode ? `[Ảnh ${activeCompareSlot}]` : 'để so sánh'}
+                📁 Chọn ảnh từ iPad
               </Text>
             </TouchableOpacity>
 
@@ -696,11 +710,18 @@ export default function TetherScreen() {
                   activeOpacity={0.8}
                   onPress={() => {
                     if (isCompareMode) {
-                      if (activeCompareSlot === 'A') {
+                      if (isLockB) {
+                        // Khóa Ảnh B cố định: Bấm ảnh nào cũng chỉ gán vào Ảnh A
                         setComparePhotoA(p);
-                        setActiveCompareSlot('B'); // Tự chuyển sang slot B cho tiện
+                        setActiveCompareSlot('A');
                       } else {
-                        setComparePhotoB(p);
+                        if (activeCompareSlot === 'A') {
+                          setComparePhotoA(p);
+                          setActiveCompareSlot('B');
+                        } else {
+                          setComparePhotoB(p);
+                          setActiveCompareSlot('A');
+                        }
                       }
                     } else {
                       setSelectedPhoto(p);
@@ -937,11 +958,17 @@ export default function TetherScreen() {
                     activeOpacity={0.8}
                     onPress={() => {
                       if (isCompareMode) {
-                        if (activeCompareSlot === 'A') {
+                        if (isLockB) {
                           setComparePhotoA(item);
-                          setActiveCompareSlot('B');
+                          setActiveCompareSlot('A');
                         } else {
-                          setComparePhotoB(item);
+                          if (activeCompareSlot === 'A') {
+                            setComparePhotoA(item);
+                            setActiveCompareSlot('B');
+                          } else {
+                            setComparePhotoB(item);
+                            setActiveCompareSlot('A');
+                          }
                         }
                       } else {
                         setSelectedPhoto(item);
@@ -1162,6 +1189,40 @@ const styles = StyleSheet.create({
   comparePaneActiveB: {
     borderColor: '#FF9500',
   },
+  comparePaneLockedB: {
+    borderColor: '#FF9500',
+    backgroundColor: '#14120e',
+  },
+  paneControlsRight: {
+    position: 'absolute',
+    top: SPACING.sm,
+    right: SPACING.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    zIndex: 10,
+  },
+  paneLockBtn: {
+    backgroundColor: 'rgba(20, 20, 20, 0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    paddingVertical: 3,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: BORDER_RADIUS.sm,
+  },
+  paneLockBtnActive: {
+    backgroundColor: 'rgba(255, 149, 0, 0.25)',
+    borderColor: '#FF9500',
+  },
+  paneLockBtnText: {
+    color: '#ccc',
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '700',
+  },
+  paneLockBtnTextActive: {
+    color: '#FF9500',
+    fontWeight: '800',
+  },
   compareImage: {
     width: '100%',
     height: '100%',
@@ -1275,12 +1336,6 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.sm,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
-  },
-  histogramFloating: {
-    position: 'absolute',
-    bottom: SPACING.md,
-    right: SPACING.lg,
-    zIndex: 25,
   },
   metaFilename: {
     color: COLORS.textPrimary,
