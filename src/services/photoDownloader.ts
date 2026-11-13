@@ -34,12 +34,15 @@ export async function requestMediaLibraryPermission(): Promise<boolean> {
  *
  * @param contentUrl  The full CCAPI URL to the image file.
  * @param filename    The original filename, e.g. `"IMG_0001.JPG"`.
+ * @param maxRetries  Number of retry attempts if camera is busy.
+ * @param fastMode    If true, downloads the lightweight embedded display JPEG (~500KB) for 10x-20x faster Wi-Fi speed.
  * @returns           Metadata about the downloaded photo.
  */
 export async function downloadAndSavePhoto(
   contentUrl: string,
   filename: string,
   maxRetries: number = 5,
+  fastMode: boolean = true,
 ): Promise<DownloadedPhoto> {
   await ensureDirectory();
 
@@ -47,14 +50,31 @@ export async function downloadAndSavePhoto(
   const uniqueName = `${Date.now()}_${filename}`;
   const localUri = `${DOWNLOAD_DIR}${uniqueName}`;
 
+  // Chuẩn bị URL: nếu fastMode = true và URL chưa có tham số kind, dùng kind=display
+  let targetUrl = contentUrl;
+  if (fastMode && !targetUrl.includes('kind=')) {
+    const sep = targetUrl.includes('?') ? '&' : '?';
+    targetUrl = `${targetUrl}${sep}kind=display`;
+  }
+
   let lastStatus = 0;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    // Download to local file system.
-    const downloadResult = await FileSystem.downloadAsync(contentUrl, localUri);
-    lastStatus = downloadResult.status;
+    try {
+      // Download to local file system.
+      const downloadResult = await FileSystem.downloadAsync(targetUrl, localUri);
+      lastStatus = downloadResult.status;
 
-    if (downloadResult.status === 200) {
-      break;
+      if (downloadResult.status === 200) {
+        break;
+      }
+
+      // Nếu camera không hỗ trợ kind=display (trả về 400/404), fallback về ảnh gốc full
+      if ((downloadResult.status === 400 || downloadResult.status === 404) && targetUrl.includes('kind=display')) {
+        targetUrl = contentUrl;
+        continue;
+      }
+    } catch {
+      /* retry */
     }
 
     // Clean up partial file.
@@ -65,18 +85,20 @@ export async function downloadAndSavePhoto(
     }
 
     // HTTP 503 = Máy ảnh Canon đang bận ghi thẻ nhớ / xử lý ảnh burst
-    if (downloadResult.status === 503 || downloadResult.status === 404) {
+    if (lastStatus === 503 || lastStatus === 404) {
       if (attempt < maxRetries) {
-        // Tăng dần thời gian chờ: 500ms, 800ms, 1200ms...
-        const waitMs = 400 + attempt * 300;
+        // Tăng dần thời gian chờ: 300ms, 550ms, 800ms...
+        const waitMs = 300 + attempt * 250;
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }
     }
 
-    throw new Error(
-      `Download failed for ${filename}: HTTP ${downloadResult.status}`,
-    );
+    if (attempt === maxRetries) {
+      throw new Error(
+        `Download failed for ${filename}: HTTP ${lastStatus}`,
+      );
+    }
   }
 
   if (lastStatus !== 200) {

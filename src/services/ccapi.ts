@@ -103,16 +103,24 @@ export class CcapiService {
   /**
    * Return the URL that can be used to download / fetch a file directly.
    * Handles full URL, absolute path with /ccapi/, or relative path.
+   * Supports kind: 'main' (full resolution 26MP) or 'display' (embedded fast preview JPEG).
    */
-  getContentUrl(pathOrUrl: string): string {
+  getContentUrl(pathOrUrl: string, kind?: 'main' | 'display' | 'thumbnail'): string {
+    let url = pathOrUrl;
     if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
-      return pathOrUrl;
+      url = pathOrUrl;
+    } else if (pathOrUrl.startsWith('/ccapi/')) {
+      url = `http://${this.ip}:${this.port}${pathOrUrl}`;
+    } else {
+      const cleanPath = pathOrUrl.replace(/^\/?(contents\/)?/, '');
+      url = `${this.baseUrl}/contents/${cleanPath}`;
     }
-    if (pathOrUrl.startsWith('/ccapi/')) {
-      return `http://${this.ip}:${this.port}${pathOrUrl}`;
+
+    if (kind && kind !== 'main' && !url.includes('kind=')) {
+      const sep = url.includes('?') ? '&' : '?';
+      url = `${url}${sep}kind=${kind}`;
     }
-    const cleanPath = pathOrUrl.replace(/^\/?(contents\/)?/, '');
-    return `${this.baseUrl}/contents/${cleanPath}`;
+    return url;
   }
 
   /**

@@ -63,6 +63,7 @@ export default function TetherScreen() {
   const [lastError, setLastError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
+  const [fastMode, setFastMode] = useState(true); // Tải ảnh xem nhanh tối ưu hiển thị (~0.5s)
 
   // ── Tính năng So sánh 2 ảnh (Side-by-Side Compare) ─────────────
   const [isCompareMode, setIsCompareMode] = useState(false);
@@ -171,7 +172,7 @@ export default function TetherScreen() {
       // Thử tải với cơ chế retry (nếu máy ảnh đang bận ghi thẻ SD khi chụp burst)
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const photo = await downloadAndSavePhoto(contentUrl, filename);
+          const photo = await downloadAndSavePhoto(contentUrl, filename, 5, fastMode);
           setPhotos((prev) => [photo, ...prev]);
           setSelectedPhoto(photo); // Tự động hiển thị ảnh mới nhất vừa chụp
 
@@ -204,7 +205,7 @@ export default function TetherScreen() {
     isDownloadingRef.current = false;
     setDownloading(false);
     setQueueCount(0);
-  }, [isCompareMode]);
+  }, [isCompareMode, fastMode]);
 
   // ── New-content handler ─────────────────────────────────────────
 
@@ -439,6 +440,24 @@ export default function TetherScreen() {
         </View>
 
         <View style={styles.topBarRight}>
+          {/* Nút chuyển đổi Tốc độ truyền ảnh */}
+          <TouchableOpacity
+            onPress={() => setFastMode(!fastMode)}
+            style={[
+              styles.speedToggleBtn,
+              fastMode && styles.speedToggleBtnActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.speedToggleBtnText,
+                fastMode && styles.speedToggleBtnTextActive,
+              ]}
+            >
+              {fastMode ? '⚡ Siêu tốc (~0.5s)' : '🖼 Ảnh gốc (~4s)'}
+            </Text>
+          </TouchableOpacity>
+
           {/* Nút bật/tắt Chế độ So sánh 2 ảnh */}
           <TouchableOpacity
             onPress={toggleCompareMode}
@@ -506,11 +525,22 @@ export default function TetherScreen() {
               </TouchableOpacity>
 
               {comparePhotoA ? (
-                <Image
-                  source={{ uri: comparePhotoA.localUri }}
-                  style={styles.compareImage}
-                  resizeMode="contain"
-                />
+                <ScrollView
+                  style={styles.zoomContainer}
+                  contentContainerStyle={styles.zoomContent}
+                  maximumZoomScale={5.0}
+                  minimumZoomScale={1.0}
+                  showsHorizontalScrollIndicator={false}
+                  showsVerticalScrollIndicator={false}
+                  centerContent={true}
+                  bouncesZoom={true}
+                >
+                  <Image
+                    source={{ uri: comparePhotoA.localUri }}
+                    style={styles.compareImage}
+                    resizeMode="contain"
+                  />
+                </ScrollView>
               ) : (
                 <View style={styles.previewPlaceholder}>
                   <Text style={styles.previewPlaceholderText}>Chưa có ảnh mới chụp</Text>
@@ -580,11 +610,22 @@ export default function TetherScreen() {
               </View>
 
               {comparePhotoB ? (
-                <Image
-                  source={{ uri: comparePhotoB.localUri }}
-                  style={styles.compareImage}
-                  resizeMode="contain"
-                />
+                <ScrollView
+                  style={styles.zoomContainer}
+                  contentContainerStyle={styles.zoomContent}
+                  maximumZoomScale={5.0}
+                  minimumZoomScale={1.0}
+                  showsHorizontalScrollIndicator={false}
+                  showsVerticalScrollIndicator={false}
+                  centerContent={true}
+                  bouncesZoom={true}
+                >
+                  <Image
+                    source={{ uri: comparePhotoB.localUri }}
+                    style={styles.compareImage}
+                    resizeMode="contain"
+                  />
+                </ScrollView>
               ) : (
                 <View style={styles.previewPlaceholder}>
                   <Text style={styles.previewPlaceholderText}>Chưa chọn Ảnh B</Text>
@@ -599,14 +640,25 @@ export default function TetherScreen() {
             </TouchableOpacity>
           </View>
         ) : (
-          /* ── CHẾ ĐỘ XEM ĐƠN TOÀN MÀN HÌNH ── */
+          /* ── CHẾ ĐỘ XEM ĐƠN TOÀN MÀN HÌNH (CÓ PHÓNG TO THU NHỎ PINCH-TO-ZOOM) ── */
           <>
             {displayPhoto ? (
-              <Image
-                source={{ uri: displayPhoto.localUri }}
-                style={styles.mainPreviewImage}
-                resizeMode="contain"
-              />
+              <ScrollView
+                style={styles.zoomContainer}
+                contentContainerStyle={styles.zoomContent}
+                maximumZoomScale={5.0}
+                minimumZoomScale={1.0}
+                showsHorizontalScrollIndicator={false}
+                showsVerticalScrollIndicator={false}
+                centerContent={true}
+                bouncesZoom={true}
+              >
+                <Image
+                  source={{ uri: displayPhoto.localUri }}
+                  style={styles.mainPreviewImage}
+                  resizeMode="contain"
+                />
+              </ScrollView>
             ) : (
               <View style={styles.previewPlaceholder}>
                 <Text style={styles.previewPlaceholderIcon}>📷</Text>
@@ -623,6 +675,13 @@ export default function TetherScreen() {
               <View style={styles.metaOverlay}>
                 <Text style={styles.metaFilename}>{displayPhoto.filename}</Text>
                 {renderExifBadge(displayPhoto.exif)}
+              </View>
+            )}
+
+            {/* Gợi ý Zoom & Phóng to thu nhỏ */}
+            {displayPhoto && (
+              <View style={styles.zoomHintBadge}>
+                <Text style={styles.zoomHintBadgeText}>🔍 Dùng 2 ngón tay phóng to / thu nhỏ chi tiết (1x - 5x)</Text>
               </View>
             )}
           </>
@@ -800,6 +859,22 @@ export default function TetherScreen() {
                 onValueChange={setAutoDownload}
                 trackColor={{ false: COLORS.bgTertiary, true: COLORS.accentLight }}
                 thumbColor={autoDownload ? COLORS.accent : COLORS.textMuted}
+              />
+            </View>
+
+            {/* Toggle Chế độ truyền ảnh siêu tốc */}
+            <View style={styles.settingItem}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingLabel}>⚡ Truyền ảnh siêu tốc (~0.5s)</Text>
+                <Text style={styles.settingDesc}>
+                  Tải ảnh xem nhanh chuẩn HD (~500KB), truyền qua Wi-Fi tức thì trong ~0.5s thay vì tải toàn bộ file 26MP (~15MB)
+                </Text>
+              </View>
+              <Switch
+                value={fastMode}
+                onValueChange={setFastMode}
+                trackColor={{ false: COLORS.bgTertiary, true: '#FFCC00' }}
+                thumbColor={fastMode ? '#FFCC00' : COLORS.textMuted}
               />
             </View>
 
@@ -1097,6 +1172,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: SPACING.sm,
   },
+  speedToggleBtn: {
+    backgroundColor: 'rgba(255, 204, 0, 0.15)',
+    borderWidth: 1,
+    borderColor: '#FFCC00',
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: BORDER_RADIUS.md,
+  },
+  speedToggleBtnActive: {
+    backgroundColor: '#FFCC00',
+  },
+  speedToggleBtnText: {
+    color: '#FFCC00',
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '700',
+  },
+  speedToggleBtnTextActive: {
+    color: '#000',
+    fontWeight: '800',
+  },
   compareToggleBtn: {
     backgroundColor: COLORS.bgTertiary,
     paddingVertical: SPACING.xs,
@@ -1144,6 +1239,33 @@ const styles = StyleSheet.create({
   mainPreviewImage: {
     width: '100%',
     height: '100%',
+  },
+  zoomContainer: {
+    width: '100%',
+    height: '100%',
+  },
+  zoomContent: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  zoomHintBadge: {
+    position: 'absolute',
+    bottom: SPACING.md,
+    right: SPACING.lg,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingVertical: 4,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: BORDER_RADIUS.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    zIndex: 15,
+  },
+  zoomHintBadgeText: {
+    color: '#aaa',
+    fontSize: 10,
+    fontWeight: '600',
   },
   previewPlaceholder: {
     alignItems: 'center',
