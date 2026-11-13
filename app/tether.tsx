@@ -1,10 +1,12 @@
 /**
- * Main tether screen — Studio Pro Layout.
+ * Main tether screen — Studio Pro Layout with Side-by-Side Comparison.
  *
  * Layout:
- *  • Top bar: Back, Camera Name, Gallery shortcut & Settings button (⚙️)
- *  • Center Stage (flex: 1): Immersive Large Photo Preview with metadata overlay
- *  • Bottom Bar: Horizontal thumbnails filmstrip of recent shots
+ *  • Top bar: Back, Camera Name, Compare Toggle (⚖️), Gallery shortcut & Settings button (⚙️)
+ *  • Center Stage (flex: 1):
+ *      - Single View: Immersive Large Photo Preview with metadata overlay
+ *      - Compare Mode: 50/50 Side-by-Side comparison of Photo A vs Photo B with Swap (⇄)
+ *  • Bottom Bar: Horizontal thumbnails filmstrip with A/B badges
  *  • Settings Modal: Connection details, Event polling, Auto-download toggle & Reconnect
  */
 
@@ -55,6 +57,12 @@ export default function TetherScreen() {
   const [lastError, setLastError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // ── Tính năng So sánh 2 ảnh (Side-by-Side Compare) ─────────────
+  const [isCompareMode, setIsCompareMode] = useState(false);
+  const [comparePhotoA, setComparePhotoA] = useState<DownloadedPhoto | null>(null);
+  const [comparePhotoB, setComparePhotoB] = useState<DownloadedPhoto | null>(null);
+  const [activeCompareSlot, setActiveCompareSlot] = useState<'A' | 'B'>('B');
+
   // Track processed URLs to avoid double-downloads.
   const processedUrls = useRef(new Set<string>());
   // Queue tải ảnh tuần tự tránh nghẽn chip Wi-Fi máy ảnh khi chụp liên tục
@@ -96,6 +104,12 @@ export default function TetherScreen() {
           const photo = await downloadAndSavePhoto(contentUrl, filename);
           setPhotos((prev) => [photo, ...prev]);
           setSelectedPhoto(photo); // Tự động hiển thị ảnh mới nhất vừa chụp
+
+          // Nếu đang ở chế độ so sánh, cập nhật ảnh mới vào khung B
+          if (isCompareMode) {
+            setComparePhotoB(photo);
+          }
+
           processedUrls.current.add(rawUrl);
           setLastError(null);
           break;
@@ -120,7 +134,7 @@ export default function TetherScreen() {
     isDownloadingRef.current = false;
     setDownloading(false);
     setQueueCount(0);
-  }, []);
+  }, [isCompareMode]);
 
   // ── New-content handler ─────────────────────────────────────────
 
@@ -160,6 +174,32 @@ export default function TetherScreen() {
 
   const isConnected = connStatus === 'connected';
   const displayPhoto = selectedPhoto ?? photos[0] ?? null;
+
+  // ── Compare Mode Handlers ───────────────────────────────────────
+
+  const toggleCompareMode = () => {
+    if (!isCompareMode) {
+      if (photos.length < 2) {
+        Alert.alert(
+          'Chế độ so sánh',
+          'Bạn cần chụp ít nhất 2 tấm ảnh trong phiên để so sánh side-by-side.',
+        );
+        return;
+      }
+      setIsCompareMode(true);
+      setComparePhotoA(selectedPhoto ?? photos[1] ?? photos[0]);
+      setComparePhotoB(photos[0]);
+      setActiveCompareSlot('B');
+    } else {
+      setIsCompareMode(false);
+    }
+  };
+
+  const swapComparePhotos = () => {
+    const temp = comparePhotoA;
+    setComparePhotoA(comparePhotoB);
+    setComparePhotoB(temp);
+  };
 
   // ── Manual reconnect ────────────────────────────────────────────
 
@@ -212,6 +252,24 @@ export default function TetherScreen() {
         </View>
 
         <View style={styles.topBarRight}>
+          {/* Nút bật/tắt Chế độ So sánh 2 ảnh */}
+          <TouchableOpacity
+            onPress={toggleCompareMode}
+            style={[
+              styles.compareToggleBtn,
+              isCompareMode && styles.compareToggleBtnActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.compareToggleBtnText,
+                isCompareMode && styles.compareToggleBtnTextActive,
+              ]}
+            >
+              ⚖️ {isCompareMode ? 'Đóng so sánh' : 'So sánh 2 ảnh'}
+            </Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             onPress={() => router.push('/gallery')}
             style={styles.topBarBtn}
@@ -230,23 +288,107 @@ export default function TetherScreen() {
         </View>
       </View>
 
-      {/* ── Main Stage (Immersive Preview) ───────────────────── */}
+      {/* ── Main Stage (Immersive Preview / Side-by-Side Compare) ─ */}
       <View style={styles.stage}>
-        {displayPhoto ? (
-          <Image
-            source={{ uri: displayPhoto.localUri }}
-            style={styles.mainPreviewImage}
-            resizeMode="contain"
-          />
-        ) : (
-          <View style={styles.previewPlaceholder}>
-            <Text style={styles.previewPlaceholderIcon}>📷</Text>
-            <Text style={styles.previewPlaceholderText}>
-              {isConnected
-                ? 'Bấm chụp trên máy ảnh — ảnh sẽ tự động hiển thị ở đây'
-                : 'Đang kết nối tới máy ảnh Canon RP...'}
-            </Text>
+        {isCompareMode ? (
+          /* ── CHẾ ĐỘ SO SÁNH 2 ẢNH SIDE-BY-SIDE ── */
+          <View style={styles.compareContainer}>
+            {/* Khung Ảnh A (Trái) */}
+            <TouchableOpacity
+              activeOpacity={0.95}
+              onPress={() => setActiveCompareSlot('A')}
+              style={[
+                styles.comparePane,
+                activeCompareSlot === 'A' && styles.comparePaneActiveA,
+              ]}
+            >
+              <View style={[styles.compareBadge, styles.compareBadgeA]}>
+                <Text style={styles.compareBadgeText}>Ảnh A (Gốc)</Text>
+              </View>
+              {comparePhotoA ? (
+                <Image
+                  source={{ uri: comparePhotoA.localUri }}
+                  style={styles.compareImage}
+                  resizeMode="contain"
+                />
+              ) : (
+                <View style={styles.previewPlaceholder}>
+                  <Text style={styles.previewPlaceholderText}>Chưa chọn Ảnh A</Text>
+                </View>
+              )}
+              {comparePhotoA && (
+                <View style={styles.compareMetaOverlay}>
+                  <Text style={styles.compareMetaText}>{comparePhotoA.filename}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            {/* Nút Đổi Chỗ ⇄ Giữa 2 Ảnh */}
+            <TouchableOpacity
+              onPress={swapComparePhotos}
+              style={styles.swapBtn}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.swapBtnText}>⇄</Text>
+            </TouchableOpacity>
+
+            {/* Khung Ảnh B (Phải) */}
+            <TouchableOpacity
+              activeOpacity={0.95}
+              onPress={() => setActiveCompareSlot('B')}
+              style={[
+                styles.comparePane,
+                activeCompareSlot === 'B' && styles.comparePaneActiveB,
+              ]}
+            >
+              <View style={[styles.compareBadge, styles.compareBadgeB]}>
+                <Text style={styles.compareBadgeText}>Ảnh B (So sánh)</Text>
+              </View>
+              {comparePhotoB ? (
+                <Image
+                  source={{ uri: comparePhotoB.localUri }}
+                  style={styles.compareImage}
+                  resizeMode="contain"
+                />
+              ) : (
+                <View style={styles.previewPlaceholder}>
+                  <Text style={styles.previewPlaceholderText}>Chưa chọn Ảnh B</Text>
+                </View>
+              )}
+              {comparePhotoB && (
+                <View style={styles.compareMetaOverlay}>
+                  <Text style={styles.compareMetaText}>{comparePhotoB.filename}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
           </View>
+        ) : (
+          /* ── CHẾ ĐỘ XEM ĐƠN TOÀN MÀN HÌNH ── */
+          <>
+            {displayPhoto ? (
+              <Image
+                source={{ uri: displayPhoto.localUri }}
+                style={styles.mainPreviewImage}
+                resizeMode="contain"
+              />
+            ) : (
+              <View style={styles.previewPlaceholder}>
+                <Text style={styles.previewPlaceholderIcon}>📷</Text>
+                <Text style={styles.previewPlaceholderText}>
+                  {isConnected
+                    ? 'Bấm chụp trên máy ảnh — ảnh sẽ tự động hiển thị ở đây'
+                    : 'Đang kết nối tới máy ảnh Canon RP...'}
+                </Text>
+              </View>
+            )}
+
+            {/* Thông tin ảnh đè nhẹ góc dưới của Stage */}
+            {displayPhoto && (
+              <View style={styles.metaOverlay}>
+                <Text style={styles.metaFilename}>{displayPhoto.filename}</Text>
+              </View>
+            )}
+          </>
         )}
 
         {/* Loading Overlay khi đang tải ảnh */}
@@ -261,13 +403,6 @@ export default function TetherScreen() {
           </View>
         )}
 
-        {/* Thông tin ảnh đè nhẹ góc dưới của Stage */}
-        {displayPhoto && (
-          <View style={styles.metaOverlay}>
-            <Text style={styles.metaFilename}>{displayPhoto.filename}</Text>
-          </View>
-        )}
-
         {/* Banner báo lỗi nổi */}
         {(lastError || errorMessage) && (
           <View style={styles.errorFloating}>
@@ -279,7 +414,11 @@ export default function TetherScreen() {
       {/* ── Bottom Filmstrip (Ảnh gần đây) ──────────────────── */}
       <View style={styles.filmstripContainer}>
         <View style={styles.filmstripHeader}>
-          <Text style={styles.filmstripTitle}>Ảnh gần đây</Text>
+          <Text style={styles.filmstripTitle}>
+            {isCompareMode
+              ? `Chạm ảnh để đổi cho khung [Ảnh ${activeCompareSlot}]`
+              : 'Ảnh gần đây'}
+          </Text>
           <Text style={styles.filmstripCounter}>{photos.length} ảnh đã chụp</Text>
         </View>
 
@@ -295,14 +434,30 @@ export default function TetherScreen() {
           >
             {photos.map((p) => {
               const isSelected = displayPhoto?.id === p.id;
+              const isA = comparePhotoA?.id === p.id;
+              const isB = comparePhotoB?.id === p.id;
+
               return (
                 <TouchableOpacity
                   key={p.id}
                   activeOpacity={0.8}
-                  onPress={() => setSelectedPhoto(p)}
+                  onPress={() => {
+                    if (isCompareMode) {
+                      if (activeCompareSlot === 'A') {
+                        setComparePhotoA(p);
+                        setActiveCompareSlot('B'); // Tự chuyển sang slot B cho tiện
+                      } else {
+                        setComparePhotoB(p);
+                      }
+                    } else {
+                      setSelectedPhoto(p);
+                    }
+                  }}
                   style={[
                     styles.thumbWrapper,
-                    isSelected && styles.thumbWrapperActive,
+                    !isCompareMode && isSelected && styles.thumbWrapperActive,
+                    isCompareMode && isA && styles.thumbWrapperCompareA,
+                    isCompareMode && isB && styles.thumbWrapperCompareB,
                   ]}
                 >
                   <Image
@@ -313,6 +468,18 @@ export default function TetherScreen() {
                   <Text style={styles.thumbLabel} numberOfLines={1}>
                     {p.filename.replace('.JPG', '')}
                   </Text>
+
+                  {/* Badge đánh dấu A hoặc B trên thumbnail */}
+                  {isCompareMode && isA && (
+                    <View style={[styles.thumbSlotBadge, { backgroundColor: '#34C759' }]}>
+                      <Text style={styles.thumbSlotBadgeText}>A</Text>
+                    </View>
+                  )}
+                  {isCompareMode && isB && (
+                    <View style={[styles.thumbSlotBadge, { backgroundColor: '#FF9500' }]}>
+                      <Text style={styles.thumbSlotBadgeText}>B</Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
               );
             })}
@@ -477,6 +644,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: SPACING.sm,
   },
+  compareToggleBtn: {
+    backgroundColor: COLORS.bgTertiary,
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  compareToggleBtnActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accentLight,
+  },
+  compareToggleBtnText: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.sm,
+    fontWeight: '600',
+  },
+  compareToggleBtnTextActive: {
+    color: '#fff',
+    fontWeight: '700',
+  },
   settingsBtn: {
     backgroundColor: COLORS.bgTertiary,
     paddingVertical: SPACING.xs,
@@ -519,6 +707,101 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 360,
   },
+
+  // ── Compare Side-by-Side Styles ─────────────────────────────────
+  compareContainer: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+    flexDirection: 'row',
+    position: 'relative',
+    padding: SPACING.xs,
+    gap: SPACING.xs,
+  },
+  comparePane: {
+    flex: 1,
+    height: '100%',
+    backgroundColor: '#111',
+    borderRadius: BORDER_RADIUS.md,
+    overflow: 'hidden',
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#222',
+  },
+  comparePaneActiveA: {
+    borderColor: '#34C759',
+  },
+  comparePaneActiveB: {
+    borderColor: '#FF9500',
+  },
+  compareImage: {
+    width: '100%',
+    height: '100%',
+  },
+  compareBadge: {
+    position: 'absolute',
+    top: SPACING.sm,
+    left: SPACING.sm,
+    paddingVertical: 3,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: BORDER_RADIUS.sm,
+    zIndex: 10,
+  },
+  compareBadgeA: {
+    backgroundColor: 'rgba(52, 199, 89, 0.9)',
+  },
+  compareBadgeB: {
+    backgroundColor: 'rgba(255, 149, 0, 0.9)',
+  },
+  compareBadgeText: {
+    color: '#000',
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  compareMetaOverlay: {
+    position: 'absolute',
+    bottom: SPACING.sm,
+    left: SPACING.sm,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingVertical: 2,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: 4,
+    zIndex: 10,
+  },
+  compareMetaText: {
+    color: '#fff',
+    fontSize: FONT_SIZE.xs,
+    fontFamily: 'monospace',
+  },
+  swapBtn: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginLeft: -20,
+    marginTop: -20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(20, 20, 20, 0.9)',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 30,
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 5,
+  },
+  swapBtnText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+
+  // Overlays
   downloadingOverlay: {
     position: 'absolute',
     top: SPACING.lg,
@@ -532,6 +815,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.borderLight,
     gap: SPACING.sm,
+    zIndex: 20,
   },
   downloadingText: {
     color: COLORS.textPrimary,
@@ -563,6 +847,7 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.sm,
+    zIndex: 20,
   },
   errorText: {
     color: '#fff',
@@ -612,6 +897,27 @@ const styles = StyleSheet.create({
   },
   thumbWrapperActive: {
     borderColor: COLORS.accent,
+  },
+  thumbWrapperCompareA: {
+    borderColor: '#34C759',
+  },
+  thumbWrapperCompareB: {
+    borderColor: '#FF9500',
+  },
+  thumbSlotBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  thumbSlotBadgeText: {
+    color: '#000',
+    fontSize: 10,
+    fontWeight: '900',
   },
   thumbImage: {
     width: '100%',
