@@ -3,7 +3,7 @@
     "name": "Canon Tether",
     "slug": "canon-tether-ipad",
     "version": "1.0.0",
-    "orientation": "landscape",
+    "orientation": "default",
     "icon": "./assets/icon.jpg",
     "scheme": "canon-tether",
     "userInterfaceStyle": "dark",
@@ -14,7 +14,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "isTabletOnly": true,
+      "isTabletOnly": false,
       "bundleIdentifier": "com.canontether.ipad",
       "buildNumber": "1",
       "infoPlist": {
