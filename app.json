@@ -34,6 +34,12 @@
           "savePhotosPermission": "Canon Tether cần quyền lưu ảnh vào Thư viện Ảnh.",
           "isAccessMediaLocationEnabled": true
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Canon Tether cần quyền chọn ảnh tham chiếu từ iPad để so sánh."
+        }
       ]
     ],
     "experiments": {

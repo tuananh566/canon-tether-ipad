@@ -28,6 +28,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as FileSystem from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
 import { useCameraConnection } from '../src/hooks/useCameraConnection';
 import { useEventPoller } from '../src/hooks/useEventPoller';
 import { ccapi } from '../src/services/ccapi';
@@ -249,16 +250,9 @@ export default function TetherScreen() {
 
   const toggleCompareMode = () => {
     if (!isCompareMode) {
-      if (photos.length < 2) {
-        Alert.alert(
-          'Chế độ so sánh',
-          'Bạn cần chụp ít nhất 2 tấm ảnh trong phiên để so sánh side-by-side.',
-        );
-        return;
-      }
       setIsCompareMode(true);
-      setComparePhotoA(selectedPhoto ?? photos[1] ?? photos[0]);
-      setComparePhotoB(photos[0]);
+      setComparePhotoA(selectedPhoto ?? photos[0] ?? null);
+      setComparePhotoB(photos[1] ?? photos[0] ?? null);
       setActiveCompareSlot('B');
     } else {
       setIsCompareMode(false);
@@ -269,6 +263,62 @@ export default function TetherScreen() {
     const temp = comparePhotoA;
     setComparePhotoA(comparePhotoB);
     setComparePhotoB(temp);
+  };
+
+  // ── Chọn ảnh tham chiếu từ iPad (không qua máy ảnh) ──────────────
+  const handlePickExternalImage = async (targetSlot?: 'A' | 'B') => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Quyền truy cập',
+          'Vui lòng cấp quyền truy cập Ảnh trong Cài đặt iPad để chọn ảnh tham chiếu.',
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 1,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        const name = asset.fileName || `Tham chiếu iPad (${asset.width ?? ''}x${asset.height ?? ''})`;
+        const externalPhoto: DownloadedPhoto = {
+          id: `ref_${Date.now()}`,
+          filename: name,
+          localUri: asset.uri,
+          timestamp: Date.now(),
+          exif: {
+            lens: 'Ảnh tham chiếu (iPad)',
+          },
+        };
+
+        // Thêm vào danh sách để hiển thị ở filmstrip
+        setPhotos((prev) => [externalPhoto, ...prev]);
+
+        if (isCompareMode) {
+          const slot = targetSlot || activeCompareSlot;
+          if (slot === 'A') {
+            setComparePhotoA(externalPhoto);
+            setActiveCompareSlot('B');
+          } else {
+            setComparePhotoB(externalPhoto);
+          }
+        } else {
+          // Tự động mở chế độ so sánh với ảnh này
+          setIsCompareMode(true);
+          setComparePhotoA(selectedPhoto ?? externalPhoto);
+          setComparePhotoB(externalPhoto);
+          setActiveCompareSlot('B');
+        }
+      }
+    } catch (err) {
+      console.error('[PickExternal] error:', err);
+      Alert.alert('Lỗi', 'Không thể mở thư viện ảnh iPad.');
+    }
   };
 
   // ── Manual reconnect ────────────────────────────────────────────
@@ -458,6 +508,16 @@ export default function TetherScreen() {
               <View style={[styles.compareBadge, styles.compareBadgeA]}>
                 <Text style={styles.compareBadgeText}>Ảnh A (Gốc)</Text>
               </View>
+
+              {/* Nút chọn ảnh từ iPad cho Khung A */}
+              <TouchableOpacity
+                onPress={() => handlePickExternalImage('A')}
+                style={styles.panePickExternalBtn}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.panePickExternalBtnText}>📁 Chọn ảnh từ iPad</Text>
+              </TouchableOpacity>
+
               {comparePhotoA ? (
                 <Image
                   source={{ uri: comparePhotoA.localUri }}
@@ -498,6 +558,16 @@ export default function TetherScreen() {
               <View style={[styles.compareBadge, styles.compareBadgeB]}>
                 <Text style={styles.compareBadgeText}>Ảnh B (So sánh)</Text>
               </View>
+
+              {/* Nút chọn ảnh từ iPad cho Khung B */}
+              <TouchableOpacity
+                onPress={() => handlePickExternalImage('B')}
+                style={styles.panePickExternalBtn}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.panePickExternalBtnText}>📁 Chọn ảnh từ iPad</Text>
+              </TouchableOpacity>
+
               {comparePhotoB ? (
                 <Image
                   source={{ uri: comparePhotoB.localUri }}
@@ -589,7 +659,20 @@ export default function TetherScreen() {
               ? `Chạm ảnh để đổi cho khung [Ảnh ${activeCompareSlot}]`
               : 'Ảnh gần đây'}
           </Text>
-          <Text style={styles.filmstripCounter}>{photos.length} ảnh đã chụp</Text>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm }}>
+            <TouchableOpacity
+              onPress={() => handlePickExternalImage(isCompareMode ? activeCompareSlot : 'B')}
+              style={styles.pickExternalStripBtn}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.pickExternalStripBtnText}>
+                📁 Chọn ảnh từ iPad {isCompareMode ? `[Ảnh ${activeCompareSlot}]` : 'để so sánh'}
+              </Text>
+            </TouchableOpacity>
+
+            <Text style={styles.filmstripCounter}>{photos.length} ảnh</Text>
+          </View>
         </View>
 
         {photos.length === 0 ? (
@@ -638,6 +721,13 @@ export default function TetherScreen() {
                   <Text style={styles.thumbLabel} numberOfLines={1}>
                     {p.filename.replace('.JPG', '')}
                   </Text>
+
+                  {/* Badge đánh dấu ảnh tham chiếu từ iPad */}
+                  {p.id.startsWith('ref_') && (
+                    <View style={styles.thumbRefBadge}>
+                      <Text style={styles.thumbRefBadgeText}>📁 iPad</Text>
+                    </View>
+                  )}
 
                   {/* Badge đánh dấu A hoặc B trên thumbnail */}
                   {isCompareMode && isA && (
@@ -784,6 +874,16 @@ export default function TetherScreen() {
             </View>
 
             <View style={styles.galleryModalActions}>
+              <TouchableOpacity
+                onPress={() => {
+                  setIsGalleryOpen(false);
+                  handlePickExternalImage(isCompareMode ? activeCompareSlot : 'B');
+                }}
+                style={styles.galleryHeaderBtn}
+              >
+                <Text style={styles.galleryHeaderBtnText}>📁 Chọn ảnh từ iPad</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity
                 onPress={loadSavedPhotos}
                 style={styles.galleryHeaderBtn}
@@ -1087,6 +1187,23 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     textTransform: 'uppercase',
   },
+  panePickExternalBtn: {
+    position: 'absolute',
+    top: SPACING.sm,
+    right: SPACING.sm,
+    backgroundColor: 'rgba(20, 20, 20, 0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    paddingVertical: 3,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: BORDER_RADIUS.sm,
+    zIndex: 10,
+  },
+  panePickExternalBtnText: {
+    color: '#fff',
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '700',
+  },
   compareMetaOverlay: {
     position: 'absolute',
     bottom: SPACING.sm,
@@ -1230,6 +1347,19 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     fontSize: FONT_SIZE.xs,
   },
+  pickExternalStripBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    paddingVertical: 2,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: BORDER_RADIUS.sm,
+  },
+  pickExternalStripBtnText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
   filmstripContent: {
     gap: SPACING.sm,
     alignItems: 'center',
@@ -1267,6 +1397,21 @@ const styles = StyleSheet.create({
     color: '#000',
     fontSize: 10,
     fontWeight: '900',
+  },
+  thumbRefBadge: {
+    position: 'absolute',
+    top: 2,
+    left: 2,
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 3,
+    zIndex: 6,
+  },
+  thumbRefBadgeText: {
+    color: '#fff',
+    fontSize: 8,
+    fontWeight: '800',
   },
   thumbImage: {
     width: '100%',
