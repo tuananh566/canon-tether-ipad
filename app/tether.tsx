@@ -1,12 +1,11 @@
 /**
- * Main tether screen.
+ * Main tether screen — Studio Pro Layout.
  *
- * Shows:
- *  • Connection status badge
- *  • Large preview of the last downloaded photo
- *  • Photo counter
- *  • Auto-download toggle
- *  • Gallery shortcut
+ * Layout:
+ *  • Top bar: Back, Camera Name, Gallery shortcut & Settings button (⚙️)
+ *  • Center Stage (flex: 1): Immersive Large Photo Preview with metadata overlay
+ *  • Bottom Bar: Horizontal thumbnails filmstrip of recent shots
+ *  • Settings Modal: Connection details, Event polling, Auto-download toggle & Reconnect
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -18,9 +17,10 @@ import {
   StyleSheet,
   Switch,
   ActivityIndicator,
-  Dimensions,
   ScrollView,
   Alert,
+  Modal,
+  SafeAreaView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useCameraConnection } from '../src/hooks/useCameraConnection';
@@ -34,9 +34,6 @@ import {
 } from '../src/services/photoDownloader';
 import { DownloadedPhoto } from '../src/types/ccapi';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS } from '../src/constants/theme';
-
-const { width: SCREEN_W } = Dimensions.get('window');
-const PREVIEW_SIZE = Math.min(SCREEN_W * 0.55, 800);
 
 export default function TetherScreen() {
   const router = useRouter();
@@ -52,9 +49,11 @@ export default function TetherScreen() {
 
   const [autoDownload, setAutoDownload] = useState(true);
   const [photos, setPhotos] = useState<DownloadedPhoto[]>([]);
+  const [selectedPhoto, setSelectedPhoto] = useState<DownloadedPhoto | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [queueCount, setQueueCount] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Track processed URLs to avoid double-downloads.
   const processedUrls = useRef(new Set<string>());
@@ -91,14 +90,13 @@ export default function TetherScreen() {
       const filename = filenameFromPath(rawUrl);
       const contentUrl = ccapi.getContentUrl(rawUrl);
 
-      // Cơ chế retry 3 lần: phòng trường hợp máy ảnh đang bận ghi thẻ SD khi chụp burst
-      let downloaded = false;
+      // Thử tải với cơ chế retry (nếu máy ảnh đang bận ghi thẻ SD khi chụp burst)
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const photo = await downloadAndSavePhoto(contentUrl, filename);
           setPhotos((prev) => [photo, ...prev]);
+          setSelectedPhoto(photo); // Tự động hiển thị ảnh mới nhất vừa chụp
           processedUrls.current.add(rawUrl);
-          downloaded = true;
           setLastError(null);
           break;
         } catch (err: unknown) {
@@ -161,7 +159,7 @@ export default function TetherScreen() {
   // ── Derived state ───────────────────────────────────────────────
 
   const isConnected = connStatus === 'connected';
-  const latestPhoto = photos[0] ?? null;
+  const displayPhoto = selectedPhoto ?? photos[0] ?? null;
 
   // ── Manual reconnect ────────────────────────────────────────────
 
@@ -188,8 +186,8 @@ export default function TetherScreen() {
   // ── Render ──────────────────────────────────────────────────────
 
   return (
-    <View style={styles.container}>
-      {/* ── Top bar ─────────────────────────────────────────── */}
+    <SafeAreaView style={styles.container}>
+      {/* ── Top Bar ─────────────────────────────────────────── */}
       <View style={styles.topBar}>
         <TouchableOpacity onPress={handleDisconnect} style={styles.topBarBtn}>
           <Text style={styles.topBarBtnText}>← Thoát</Text>
@@ -209,165 +207,225 @@ export default function TetherScreen() {
             ]}
           />
           <Text style={styles.topBarTitle}>
-            {deviceInfo?.productname ?? 'Canon Camera'}
+            {deviceInfo?.productname ?? 'Canon EOS RP'}
           </Text>
         </View>
 
-        <TouchableOpacity
-          onPress={() => router.push('/gallery')}
-          style={styles.topBarBtn}
-        >
-          <Text style={styles.topBarBtnText}>
-            🖼 Thư viện ({photos.length})
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.topBarRight}>
+          <TouchableOpacity
+            onPress={() => router.push('/gallery')}
+            style={styles.topBarBtn}
+          >
+            <Text style={styles.topBarBtnText}>
+              🖼 Thư viện ({photos.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setIsSettingsOpen(true)}
+            style={styles.settingsBtn}
+          >
+            <Text style={styles.settingsBtnText}>⚙️ Cài đặt</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* ── Main content ────────────────────────────────────── */}
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Preview */}
-        <View style={styles.previewContainer}>
-          {latestPhoto ? (
-            <Image
-              source={{ uri: latestPhoto.localUri }}
-              style={styles.previewImage}
-              resizeMode="contain"
-            />
-          ) : (
-            <View style={styles.previewPlaceholder}>
-              <Text style={styles.previewPlaceholderIcon}>📷</Text>
-              <Text style={styles.previewPlaceholderText}>
-                {isConnected
-                  ? 'Chụp ảnh trên máy ảnh — ảnh sẽ tự động hiển thị ở đây'
-                  : 'Đang chờ kết nối...'}
-              </Text>
-            </View>
-          )}
-
-          {downloading && (
-            <View style={styles.downloadingOverlay}>
-              <ActivityIndicator size="large" color={COLORS.accent} />
-              <Text style={styles.downloadingText}>
-                {queueCount > 0
-                  ? `Đang đồng bộ (còn ${queueCount + 1} ảnh)...`
-                  : 'Đang tải ảnh...'}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* Latest photo info */}
-        {latestPhoto && (
-          <Text style={styles.latestFilename}>{latestPhoto.filename}</Text>
-        )}
-
-        {/* Status cards row */}
-        <View style={styles.cardsRow}>
-          {/* Connection status */}
-          <View style={styles.statusCard}>
-            <Text style={styles.cardLabel}>Kết nối</Text>
-            <Text
-              style={[
-                styles.cardValue,
-                { color: isConnected ? COLORS.success : COLORS.error },
-              ]}
-            >
+      {/* ── Main Stage (Immersive Preview) ───────────────────── */}
+      <View style={styles.stage}>
+        {displayPhoto ? (
+          <Image
+            source={{ uri: displayPhoto.localUri }}
+            style={styles.mainPreviewImage}
+            resizeMode="contain"
+          />
+        ) : (
+          <View style={styles.previewPlaceholder}>
+            <Text style={styles.previewPlaceholderIcon}>📷</Text>
+            <Text style={styles.previewPlaceholderText}>
               {isConnected
-                ? 'Đã kết nối'
-                : connStatus === 'connecting'
-                  ? 'Đang kết nối...'
-                  : 'Mất kết nối'}
-            </Text>
-            {!isConnected && connStatus !== 'connecting' && (
-              <TouchableOpacity
-                style={styles.reconnectBtn}
-                onPress={handleReconnect}
-              >
-                <Text style={styles.reconnectBtnText}>Kết nối lại</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Poller status */}
-          <View style={styles.statusCard}>
-            <Text style={styles.cardLabel}>Event Polling</Text>
-            <Text
-              style={[
-                styles.cardValue,
-                {
-                  color:
-                    pollerStatus === 'polling'
-                      ? COLORS.success
-                      : pollerStatus === 'reconnecting'
-                        ? COLORS.warning
-                        : COLORS.textMuted,
-                },
-              ]}
-            >
-              {pollerStatus === 'polling'
-                ? '🟢 Đang lắng nghe'
-                : pollerStatus === 'reconnecting'
-                  ? '🟡 Đang kết nối lại'
-                  : '⚪ Dừng'}
+                ? 'Bấm chụp trên máy ảnh — ảnh sẽ tự động hiển thị ở đây'
+                : 'Đang kết nối tới máy ảnh Canon RP...'}
             </Text>
           </View>
+        )}
 
-          {/* Counter */}
-          <View style={styles.statusCard}>
-            <Text style={styles.cardLabel}>Số ảnh</Text>
-            <Text style={[styles.cardValue, styles.counterValue]}>
-              {photos.length}
+        {/* Loading Overlay khi đang tải ảnh */}
+        {downloading && (
+          <View style={styles.downloadingOverlay}>
+            <ActivityIndicator size="large" color={COLORS.accent} />
+            <Text style={styles.downloadingText}>
+              {queueCount > 0
+                ? `Đang đồng bộ (còn ${queueCount + 1} ảnh)...`
+                : 'Đang tải ảnh...'}
             </Text>
           </View>
+        )}
 
-          {/* Auto-download toggle */}
-          <View style={styles.statusCard}>
-            <Text style={styles.cardLabel}>Tự động tải</Text>
-            <Switch
-              value={autoDownload}
-              onValueChange={setAutoDownload}
-              trackColor={{ false: COLORS.bgTertiary, true: COLORS.accentLight }}
-              thumbColor={autoDownload ? COLORS.accent : COLORS.textMuted}
-              ios_backgroundColor={COLORS.bgTertiary}
-              style={{ marginTop: SPACING.xs }}
-            />
+        {/* Thông tin ảnh đè nhẹ góc dưới của Stage */}
+        {displayPhoto && (
+          <View style={styles.metaOverlay}>
+            <Text style={styles.metaFilename}>{displayPhoto.filename}</Text>
           </View>
+        )}
+
+        {/* Banner báo lỗi nổi */}
+        {(lastError || errorMessage) && (
+          <View style={styles.errorFloating}>
+            <Text style={styles.errorText}>⚠️ {lastError || errorMessage}</Text>
+          </View>
+        )}
+      </View>
+
+      {/* ── Bottom Filmstrip (Ảnh gần đây) ──────────────────── */}
+      <View style={styles.filmstripContainer}>
+        <View style={styles.filmstripHeader}>
+          <Text style={styles.filmstripTitle}>Ảnh gần đây</Text>
+          <Text style={styles.filmstripCounter}>{photos.length} ảnh đã chụp</Text>
         </View>
 
-        {/* Error banner */}
-        {(lastError || errorMessage) && (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorText}>
-              ⚠️ {lastError || errorMessage}
-            </Text>
+        {photos.length === 0 ? (
+          <View style={styles.emptyStrip}>
+            <Text style={styles.emptyStripText}>Chưa có ảnh nào được tải về</Text>
           </View>
-        )}
-
-        {/* Recent thumbnails strip */}
-        {photos.length > 1 && (
-          <View style={styles.stripContainer}>
-            <Text style={styles.stripTitle}>Ảnh gần đây</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.strip}
-            >
-              {photos.slice(0, 20).map((p) => (
-                <Image
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filmstripContent}
+          >
+            {photos.map((p) => {
+              const isSelected = displayPhoto?.id === p.id;
+              return (
+                <TouchableOpacity
                   key={p.id}
-                  source={{ uri: p.localUri }}
-                  style={styles.stripThumb}
-                  resizeMode="cover"
-                />
-              ))}
-            </ScrollView>
-          </View>
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedPhoto(p)}
+                  style={[
+                    styles.thumbWrapper,
+                    isSelected && styles.thumbWrapperActive,
+                  ]}
+                >
+                  <Image
+                    source={{ uri: p.localUri }}
+                    style={styles.thumbImage}
+                    resizeMode="cover"
+                  />
+                  <Text style={styles.thumbLabel} numberOfLines={1}>
+                    {p.filename.replace('.JPG', '')}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         )}
-      </ScrollView>
-    </View>
+      </View>
+
+      {/* ── Settings Modal ──────────────────────────────────── */}
+      <Modal
+        visible={isSettingsOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsSettingsOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>⚙️ Cài đặt Tether</Text>
+              <TouchableOpacity
+                onPress={() => setIsSettingsOpen(false)}
+                style={styles.modalCloseBtn}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Toggle Tự động tải */}
+            <View style={styles.settingItem}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingLabel}>Tự động tải ảnh</Text>
+                <Text style={styles.settingDesc}>
+                  Tự động tải ảnh về iPad ngay sau khi bấm chụp trên máy ảnh
+                </Text>
+              </View>
+              <Switch
+                value={autoDownload}
+                onValueChange={setAutoDownload}
+                trackColor={{ false: COLORS.bgTertiary, true: COLORS.accentLight }}
+                thumbColor={autoDownload ? COLORS.accent : COLORS.textMuted}
+              />
+            </View>
+
+            {/* Trạng thái kết nối */}
+            <View style={styles.settingCard}>
+              <Text style={styles.settingCardTitle}>Trạng thái máy ảnh</Text>
+              <View style={styles.settingRow}>
+                <Text style={styles.settingKey}>Kết nối Wi-Fi:</Text>
+                <Text
+                  style={[
+                    styles.settingVal,
+                    { color: isConnected ? COLORS.success : COLORS.error },
+                  ]}
+                >
+                  {isConnected ? '🟢 Đã kết nối' : '🔴 Mất kết nối'}
+                </Text>
+              </View>
+              <View style={styles.settingRow}>
+                <Text style={styles.settingKey}>IP Máy ảnh:</Text>
+                <Text style={styles.settingVal}>{cameraIp || 'Chưa có'}</Text>
+              </View>
+              <View style={styles.settingRow}>
+                <Text style={styles.settingKey}>Event Polling:</Text>
+                <Text
+                  style={[
+                    styles.settingVal,
+                    {
+                      color:
+                        pollerStatus === 'polling'
+                          ? COLORS.success
+                          : pollerStatus === 'reconnecting'
+                            ? COLORS.warning
+                            : COLORS.textMuted,
+                    },
+                  ]}
+                >
+                  {pollerStatus === 'polling'
+                    ? '🟢 Đang lắng nghe'
+                    : pollerStatus === 'reconnecting'
+                      ? '🟡 Đang kết nối lại'
+                      : '⚪ Dừng'}
+                </Text>
+              </View>
+              <View style={styles.settingRow}>
+                <Text style={styles.settingKey}>Tổng số ảnh:</Text>
+                <Text style={[styles.settingVal, { fontWeight: '700' }]}>
+                  {photos.length} tấm
+                </Text>
+              </View>
+
+              {!isConnected && (
+                <TouchableOpacity
+                  style={styles.reconnectModalBtn}
+                  onPress={handleReconnect}
+                >
+                  <Text style={styles.reconnectModalText}>🔄 Thử kết nối lại</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Nút thoát */}
+            <TouchableOpacity
+              style={styles.disconnectModalBtn}
+              onPress={() => {
+                setIsSettingsOpen(false);
+                handleDisconnect();
+              }}
+            >
+              <Text style={styles.disconnectModalText}>Ngắt kết nối máy ảnh</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
@@ -379,21 +437,20 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
   },
 
-  // Top bar
+  // Top Bar
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.xxl,
-    paddingBottom: SPACING.md,
+    paddingVertical: SPACING.sm,
     backgroundColor: COLORS.bgSecondary,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
   topBarBtn: {
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
   },
   topBarBtnText: {
     color: COLORS.accent,
@@ -415,28 +472,35 @@ const styles = StyleSheet.create({
     height: 10,
     borderRadius: 5,
   },
-
-  // Content
-  content: {
+  topBarRight: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.lg,
+    gap: SPACING.sm,
   },
-
-  // Preview
-  previewContainer: {
-    width: PREVIEW_SIZE,
-    height: PREVIEW_SIZE * 0.66,
-    backgroundColor: COLORS.bgSecondary,
-    borderRadius: BORDER_RADIUS.lg,
-    overflow: 'hidden',
-    justifyContent: 'center',
-    alignItems: 'center',
+  settingsBtn: {
+    backgroundColor: COLORS.bgTertiary,
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
     borderWidth: 1,
     borderColor: COLORS.border,
-    marginBottom: SPACING.md,
   },
-  previewImage: {
+  settingsBtnText: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.sm,
+    fontWeight: '600',
+  },
+
+  // Main Stage (Preview)
+  stage: {
+    flex: 1,
+    backgroundColor: '#0a0a0a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  mainPreviewImage: {
     width: '100%',
     height: '100%',
   },
@@ -445,117 +509,242 @@ const styles = StyleSheet.create({
     padding: SPACING.xl,
   },
   previewPlaceholderIcon: {
-    fontSize: 48,
+    fontSize: 56,
     marginBottom: SPACING.md,
-    opacity: 0.4,
+    opacity: 0.3,
   },
   previewPlaceholderText: {
     color: COLORS.textMuted,
     fontSize: FONT_SIZE.md,
     textAlign: 'center',
-    maxWidth: 300,
+    maxWidth: 360,
   },
   downloadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: COLORS.overlay,
-    justifyContent: 'center',
+    position: 'absolute',
+    top: SPACING.lg,
+    right: SPACING.lg,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.full,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
     gap: SPACING.sm,
   },
   downloadingText: {
     color: COLORS.textPrimary,
-    fontSize: FONT_SIZE.md,
+    fontSize: FONT_SIZE.sm,
     fontWeight: '600',
   },
-  latestFilename: {
-    color: COLORS.textSecondary,
+  metaOverlay: {
+    position: 'absolute',
+    bottom: SPACING.md,
+    left: SPACING.lg,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  metaFilename: {
+    color: COLORS.textPrimary,
     fontSize: FONT_SIZE.sm,
-    marginBottom: SPACING.lg,
+    fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
-
-  // Cards row
-  cardsRow: {
-    flexDirection: 'row',
-    gap: SPACING.md,
-    width: '100%',
-    maxWidth: 900,
-    marginBottom: SPACING.lg,
+  errorFloating: {
+    position: 'absolute',
+    top: SPACING.lg,
+    left: SPACING.lg,
+    backgroundColor: 'rgba(255, 59, 48, 0.85)',
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.sm,
   },
-  statusCard: {
-    flex: 1,
+  errorText: {
+    color: '#fff',
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '600',
+  },
+
+  // Bottom Filmstrip
+  filmstripContainer: {
+    height: 125,
     backgroundColor: COLORS.bgSecondary,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.md,
+  },
+  filmstripHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: SPACING.xs,
+  },
+  filmstripTitle: {
+    color: COLORS.textSecondary,
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  filmstripCounter: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZE.xs,
+  },
+  filmstripContent: {
+    gap: SPACING.sm,
+    alignItems: 'center',
+  },
+  thumbWrapper: {
+    width: 100,
+    height: 70,
+    borderRadius: BORDER_RADIUS.sm,
+    overflow: 'hidden',
+    backgroundColor: COLORS.bgTertiary,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    position: 'relative',
+  },
+  thumbWrapperActive: {
+    borderColor: COLORS.accent,
+  },
+  thumbImage: {
+    width: '100%',
+    height: '100%',
+  },
+  thumbLabel: {
+    position: 'absolute',
+    bottom: 2,
+    left: 2,
+    right: 2,
+    fontSize: 9,
+    color: '#fff',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 2,
+    borderRadius: 2,
+    textAlign: 'center',
+  },
+  emptyStrip: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyStripText: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZE.xs,
+  },
+
+  // Modal Settings
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.lg,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 500,
+    backgroundColor: COLORS.bgSecondary,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.lg,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  cardLabel: {
-    fontSize: FONT_SIZE.xs,
-    color: COLORS.textMuted,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: SPACING.xs,
-  },
-  cardValue: {
-    fontSize: FONT_SIZE.md,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  counterValue: {
-    fontSize: FONT_SIZE.xxl,
-    color: COLORS.accent,
-  },
-  reconnectBtn: {
-    marginTop: SPACING.sm,
-    backgroundColor: COLORS.accent,
-    borderRadius: BORDER_RADIUS.sm,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
-  },
-  reconnectBtnText: {
-    color: COLORS.textPrimary,
-    fontSize: FONT_SIZE.xs,
-    fontWeight: '600',
-  },
-
-  // Error
-  errorBanner: {
-    width: '100%',
-    maxWidth: 900,
-    backgroundColor: 'rgba(255, 59, 48, 0.12)',
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md,
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: SPACING.lg,
-    borderWidth: 1,
-    borderColor: COLORS.error,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    paddingBottom: SPACING.sm,
   },
-  errorText: {
-    color: COLORS.error,
-    fontSize: FONT_SIZE.sm,
+  modalTitle: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.lg,
+    fontWeight: '700',
   },
-
-  // Recent strip
-  stripContainer: {
-    width: '100%',
-    maxWidth: 900,
+  modalCloseBtn: {
+    padding: SPACING.xs,
   },
-  stripTitle: {
-    fontSize: FONT_SIZE.sm,
+  modalCloseText: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZE.lg,
+    fontWeight: '700',
+  },
+  settingItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.bgTertiary,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    marginBottom: SPACING.md,
+  },
+  settingLabel: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.md,
     fontWeight: '600',
+  },
+  settingDesc: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZE.xs,
+    marginTop: 2,
+  },
+  settingCard: {
+    backgroundColor: COLORS.bgTertiary,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    marginBottom: SPACING.md,
+  },
+  settingCardTitle: {
     color: COLORS.textSecondary,
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '700',
+    textTransform: 'uppercase',
     marginBottom: SPACING.sm,
   },
-  strip: {
-    gap: SPACING.sm,
-    paddingBottom: SPACING.md,
+  settingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: SPACING.xs,
   },
-  stripThumb: {
-    width: 120,
-    height: 80,
+  settingKey: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZE.sm,
+  },
+  settingVal: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.sm,
+  },
+  reconnectModalBtn: {
+    marginTop: SPACING.md,
+    backgroundColor: COLORS.accent,
+    paddingVertical: SPACING.sm,
     borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: COLORS.bgTertiary,
+    alignItems: 'center',
+  },
+  reconnectModalText: {
+    color: '#fff',
+    fontSize: FONT_SIZE.sm,
+    fontWeight: '600',
+  },
+  disconnectModalBtn: {
+    borderWidth: 1,
+    borderColor: COLORS.error,
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    alignItems: 'center',
+  },
+  disconnectModalText: {
+    color: COLORS.error,
+    fontSize: FONT_SIZE.md,
+    fontWeight: '600',
   },
 });
