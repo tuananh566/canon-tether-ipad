@@ -87,6 +87,7 @@ export interface DownloadedPhoto {
   id: string;
   filename: string;
   localUri: string;
+  assetId?: string;
   timestamp: number;
   width?: number;
   height?: number;

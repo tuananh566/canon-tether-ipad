@@ -38,6 +38,7 @@ import {
   isJpeg,
   requestMediaLibraryPermission,
   clearLocalCache,
+  deletePhotoEverywhere,
   DOWNLOAD_DIR,
 } from '../src/services/photoDownloader';
 import { DownloadedPhoto, PhotoExif } from '../src/types/ccapi';
@@ -373,6 +374,46 @@ export default function TetherScreen() {
     );
   };
 
+  // ── Xoá ảnh khỏi app đồng thời xoá trong iPad Photos ───────────
+  const handleDeletePhoto = (photo: DownloadedPhoto) => {
+    Alert.alert(
+      'Xoá ảnh',
+      `Bạn có muốn xoá vĩnh viễn ảnh "${photo.filename}" khỏi app và Thư viện Ảnh của iPad?`,
+      [
+        { text: 'Huỷ', style: 'cancel' },
+        {
+          text: 'Xoá ảnh',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deletePhotoEverywhere(photo);
+
+              // Cập nhật danh sách ảnh
+              setPhotos((prev) => {
+                const remaining = prev.filter((p) => p.id !== photo.id);
+                // Nếu ảnh đang xem bị xoá thì tự động chuyển sang ảnh tiếp theo
+                if (selectedPhoto?.id === photo.id) {
+                  setSelectedPhoto(remaining[0] ?? null);
+                }
+                return remaining;
+              });
+
+              if (comparePhotoA?.id === photo.id) {
+                setComparePhotoA(null);
+              }
+              if (comparePhotoB?.id === photo.id) {
+                setComparePhotoB(null);
+              }
+            } catch (err) {
+              console.error('[Tether] Delete photo error:', err);
+              Alert.alert('Lỗi', 'Không thể xoá ảnh.');
+            }
+          },
+        },
+      ],
+    );
+  };
+
   // ── Render Exif Badge Helper ───────────────────────────────────
 
   const renderExifBadge = (exif?: PhotoExif) => {
@@ -548,8 +589,17 @@ export default function TetherScreen() {
               )}
               {comparePhotoA && (
                 <View style={styles.compareMetaOverlay}>
-                  <Text style={styles.compareMetaText}>{comparePhotoA.filename}</Text>
-                  {renderExifBadge(comparePhotoA.exif)}
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.compareMetaText}>{comparePhotoA.filename}</Text>
+                    {renderExifBadge(comparePhotoA.exif)}
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => handleDeletePhoto(comparePhotoA)}
+                    style={styles.compareDeleteBtn}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.compareDeleteBtnText}>🗑 Xóa</Text>
+                  </TouchableOpacity>
                 </View>
               )}
             </TouchableOpacity>
@@ -633,8 +683,17 @@ export default function TetherScreen() {
               )}
               {comparePhotoB && (
                 <View style={styles.compareMetaOverlay}>
-                  <Text style={styles.compareMetaText}>{comparePhotoB.filename}</Text>
-                  {renderExifBadge(comparePhotoB.exif)}
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.compareMetaText}>{comparePhotoB.filename}</Text>
+                    {renderExifBadge(comparePhotoB.exif)}
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => handleDeletePhoto(comparePhotoB)}
+                    style={styles.compareDeleteBtn}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.compareDeleteBtnText}>🗑 Xóa</Text>
+                  </TouchableOpacity>
                 </View>
               )}
             </TouchableOpacity>
@@ -670,11 +729,22 @@ export default function TetherScreen() {
               </View>
             )}
 
-            {/* Thông tin ảnh đè nhẹ góc dưới của Stage */}
+            {/* Thông tin ảnh đè nhẹ góc dưới của Stage kèm nút Xóa */}
             {displayPhoto && (
               <View style={styles.metaOverlay}>
-                <Text style={styles.metaFilename}>{displayPhoto.filename}</Text>
-                {renderExifBadge(displayPhoto.exif)}
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.metaFilename}>{displayPhoto.filename}</Text>
+                  {renderExifBadge(displayPhoto.exif)}
+                </View>
+
+                {/* Nút Xóa ảnh trong App & iPad Photos */}
+                <TouchableOpacity
+                  onPress={() => handleDeletePhoto(displayPhoto)}
+                  style={styles.deletePhotoBtn}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.deletePhotoBtnText}>🗑 Xóa ảnh</Text>
+                </TouchableOpacity>
               </View>
             )}
 
@@ -1081,16 +1151,27 @@ export default function TetherScreen() {
                     )}
 
                     <View style={styles.galleryCardFooter}>
-                      <Text style={styles.galleryCardName} numberOfLines={1}>
-                        {item.filename}
-                      </Text>
-                      {item.exif && (
-                        <Text style={styles.galleryCardExif} numberOfLines={1}>
-                          {[item.exif.aperture, item.exif.shutterSpeed, item.exif.iso]
-                            .filter(Boolean)
-                            .join(' • ')}
-                        </Text>
-                      )}
+                      <View style={styles.galleryCardFooterRow}>
+                        <View style={{ flex: 1, marginRight: 4 }}>
+                          <Text style={styles.galleryCardName} numberOfLines={1}>
+                            {item.filename}
+                          </Text>
+                          {item.exif && (
+                            <Text style={styles.galleryCardExif} numberOfLines={1}>
+                              {[item.exif.aperture, item.exif.shutterSpeed, item.exif.iso]
+                                .filter(Boolean)
+                                .join(' • ')}
+                            </Text>
+                          )}
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => handleDeletePhoto(item)}
+                          style={styles.galleryDeleteBtn}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Text style={styles.galleryDeleteBtnText}>🗑</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   </TouchableOpacity>
                 );
@@ -1391,11 +1472,29 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: SPACING.sm,
     left: SPACING.sm,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    paddingVertical: 2,
+    right: SPACING.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingVertical: 3,
     paddingHorizontal: SPACING.sm,
-    borderRadius: 4,
+    borderRadius: 6,
     zIndex: 10,
+  },
+  compareDeleteBtn: {
+    backgroundColor: 'rgba(255, 59, 48, 0.25)',
+    borderWidth: 1,
+    borderColor: '#FF3B30',
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+    marginLeft: 6,
+  },
+  compareDeleteBtnText: {
+    color: '#FF3B30',
+    fontSize: 10,
+    fontWeight: '700',
   },
   compareMetaText: {
     color: '#fff',
@@ -1452,12 +1551,31 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: SPACING.md,
     left: SPACING.lg,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.md,
-    borderRadius: BORDER_RADIUS.sm,
+    borderRadius: BORDER_RADIUS.md,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'rgba(255,255,255,0.15)',
+    maxWidth: '75%',
+    zIndex: 20,
+  },
+  deletePhotoBtn: {
+    backgroundColor: 'rgba(255, 59, 48, 0.2)',
+    borderWidth: 1,
+    borderColor: '#FF3B30',
+    paddingVertical: 5,
+    paddingHorizontal: SPACING.md,
+    borderRadius: BORDER_RADIUS.sm,
+    marginLeft: SPACING.md,
+    alignSelf: 'center',
+  },
+  deletePhotoBtnText: {
+    color: '#FF3B30',
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '700',
   },
   metaFilename: {
     color: COLORS.textPrimary,
@@ -1871,5 +1989,21 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
     marginTop: 2,
+  },
+  galleryCardFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  galleryDeleteBtn: {
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255, 59, 48, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 59, 48, 0.4)',
+  },
+  galleryDeleteBtnText: {
+    fontSize: 11,
   },
 });

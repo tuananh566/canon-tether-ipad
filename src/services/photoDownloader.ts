@@ -110,11 +110,13 @@ export async function downloadAndSavePhoto(
   // Save to the iPad Photo Library.
   let assetUri = localUri;
   let parsedExif: PhotoExif | undefined;
+  let createdAssetId: string | undefined;
   try {
     const hasPermission = await requestMediaLibraryPermission();
     if (hasPermission) {
       const asset = await MediaLibrary.createAssetAsync(localUri);
       assetUri = asset.uri;
+      createdAssetId = asset.id;
 
       // Trích xuất thông số Exif (Khẩu độ, Tốc độ, ISO, Tiêu cự)
       try {
@@ -137,11 +139,73 @@ export async function downloadAndSavePhoto(
     id: uniqueName,
     filename,
     localUri: assetUri,
+    assetId: createdAssetId,
     timestamp: Date.now(),
     exif: parsedExif,
   };
 
   return photo;
+}
+
+/**
+ * Xoá một bức ảnh khỏi cả bộ nhớ đệm app và Thư viện Ảnh của iPad.
+ */
+export async function deletePhotoEverywhere(photo: DownloadedPhoto): Promise<boolean> {
+  let deletedFromLibrary = false;
+  let deletedLocally = false;
+
+  // 1. Xoá khỏi Thư viện Ảnh của iPad (MediaLibrary)
+  try {
+    const hasPermission = await requestMediaLibraryPermission();
+    if (hasPermission) {
+      let targetAssetId = photo.assetId;
+
+      // Nếu chưa có assetId (ảnh tải từ phiên trước), tìm kiếm asset trong iPad Photos
+      if (!targetAssetId) {
+        try {
+          const assets = await MediaLibrary.getAssetsAsync({
+            first: 30,
+            mediaType: ['photo'],
+            sortBy: [MediaLibrary.SortBy.creationTime],
+          });
+          const match = assets.assets.find(
+            (a) => a.filename === photo.filename || a.uri === photo.localUri,
+          );
+          if (match) {
+            targetAssetId = match.id;
+          }
+        } catch (findErr) {
+          console.warn('[Delete] Could not search asset in library:', findErr);
+        }
+      }
+
+      if (targetAssetId) {
+        // iOS sẽ hiện thông báo xác nhận xoá của hệ thống
+        deletedFromLibrary = await MediaLibrary.deleteAssetsAsync([targetAssetId]);
+      } else if (photo.localUri.startsWith('ph://')) {
+        deletedFromLibrary = await MediaLibrary.deleteAssetsAsync([photo.localUri]);
+      }
+    }
+  } catch (libErr) {
+    console.warn('[Delete] Error deleting from iPad Photo Library:', libErr);
+  }
+
+  // 2. Xoá file lưu trữ cục bộ trong sandbox app
+  try {
+    const localFilePath = `${DOWNLOAD_DIR}${photo.id}`;
+    const fileInfo = await FileSystem.getInfoAsync(localFilePath);
+    if (fileInfo.exists) {
+      await FileSystem.deleteAsync(localFilePath, { idempotent: true });
+      deletedLocally = true;
+    } else if (photo.localUri.startsWith('file://')) {
+      await FileSystem.deleteAsync(photo.localUri, { idempotent: true });
+      deletedLocally = true;
+    }
+  } catch (fsErr) {
+    console.warn('[Delete] Error deleting local file:', fsErr);
+  }
+
+  return deletedFromLibrary || deletedLocally;
 }
 
 /**
