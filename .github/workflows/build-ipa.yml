@@ -23,20 +23,26 @@ jobs:
       - name: Generate iOS native project (Prebuild)
         run: npx expo prebuild --platform ios --clean
 
-      - name: Build App with Xcode (Unsigned)
+      - name: Build App with Xcode Archive
         run: |
           cd ios
           pod install
-          WORKSPACE_NAME=$(ls -d *.xcworkspace | head -n 1)
-          SCHEME_NAME=$(xcodebuild -workspace "$WORKSPACE_NAME" -list -json | jq -r '.workspace.schemes[0]')
-          echo "Building workspace: $WORKSPACE_NAME with scheme: $SCHEME_NAME"
           
-          xcodebuild clean build \
-            -workspace "$WORKSPACE_NAME" \
-            -scheme "$SCHEME_NAME" \
+          # Tìm đúng tên project chính (loại trừ Pods)
+          XCODEPROJ=$(ls -d *.xcodeproj | grep -v "Pods" | head -n 1)
+          APP_NAME="${XCODEPROJ%.xcodeproj}"
+          echo "Target App Name: $APP_NAME"
+          
+          cd ..
+          mkdir -p build
+          
+          # Archive app chính xác 100%
+          xcodebuild archive \
+            -workspace "ios/$APP_NAME.xcworkspace" \
+            -scheme "$APP_NAME" \
             -configuration Release \
             -destination "generic/platform=iOS" \
-            -derivedDataPath ./DerivedDataOutput \
+            -archivePath "build/$APP_NAME.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -45,7 +51,7 @@ jobs:
       - name: Package .ipa
         run: |
           mkdir -p build/Payload
-          APP_PATH=$(find ios/DerivedDataOutput -name "*.app" -type d | head -n 1)
+          APP_PATH=$(find build/*.xcarchive/Products/Applications -name "*.app" -type d | head -n 1)
           echo "Found app bundle at: $APP_PATH"
           cp -R "$APP_PATH" build/Payload/
           cd build
